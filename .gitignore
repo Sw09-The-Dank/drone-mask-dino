@@ -160,3 +160,8 @@ Thumbs.db
 .DS_Store
 *.bak
 
+input/annotations/*
+input/labels/*
+input/images/*
+
+output/*
