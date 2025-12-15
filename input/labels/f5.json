@@ -1,0 +1,166 @@
+{
+  "images": [
+    {
+      "id": 1,
+      "file_name": "f5.jpg",
+      "width": 2688,
+      "height": 1512
+    }
+  ],
+  "annotations": [
+    {
+      "id": 1,
+      "image_id": 1,
+      "category_id": 5,
+      "segmentation": {
+        "size": [
+          1512,
+          2688
+        ],
+        "counts": "baXl12U_12O000010O01O002N3M2N101N1O2O2M4M1O1O0O1O0001OO1000O100O100O0100O011N10000O10001O00000000O1000001O0O101O00000000O100000001N1000000O10000O100O100O10\\OmaN2T^1LQbN0Q^1MTbNMP^1OeYUl1"
+      },
+      "area": 1706.0,
+      "bbox": [
+        1306.0,
+        159.0,
+        78.0,
+        34.0
+      ],
+      "iscrowd": 0
+    },
+    {
+      "id": 2,
+      "image_id": 1,
+      "category_id": 2,
+      "segmentation": {
+        "size": [
+          1512,
+          2688
+        ],
+        "counts": "Wkdm1c01^O_^1j0L3M2O000O110N11O000YOSbN2o]1NoaN4o]1MPbN3Q^1MnaN4R^1MjaN6W^1<100O2N1O1O1O2M3L4M6HQYTm1"
+      },
+      "area": 715.0,
+      "bbox": [
+        1336.0,
+        161.0,
+        27.0,
+        34.0
+      ],
+      "iscrowd": 0
+    },
+    {
+      "id": 3,
+      "image_id": 1,
+      "category_id": 1,
+      "segmentation": {
+        "size": [
+          1512,
+          2688
+        ],
+        "counts": "UPZo15P_16K3M2O1O2O00O10O11N1O1N3N4ERaN10OYZRl1"
+      },
+      "area": 219.0,
+      "bbox": [
+        1372.0,
+        155.0,
+        15.0,
+        20.0
+      ],
+      "iscrowd": 0
+    },
+    {
+      "id": 4,
+      "image_id": 1,
+      "category_id": 1,
+      "segmentation": {
+        "size": [
+          1512,
+          2688
+        ],
+        "counts": "fPZo13R_16K3M2O101O0O10O101O0O1KWaNHm^166JijPl1"
+      },
+      "area": 181.0,
+      "bbox": [
+        1372.0,
+        173.0,
+        15.0,
+        17.0
+      ],
+      "iscrowd": 0
+    },
+    {
+      "id": 5,
+      "image_id": 1,
+      "category_id": 1,
+      "segmentation": {
+        "size": [
+          1512,
+          2688
+        ],
+        "counts": "ehkl11T_16K3N1O1O2O0O01000O02O0O1M4N4Jcc]n1"
+      },
+      "area": 167.0,
+      "bbox": [
+        1319.0,
+        179.0,
+        16.0,
+        16.0
+      ],
+      "iscrowd": 0
+    },
+    {
+      "id": 6,
+      "image_id": 1,
+      "category_id": 1,
+      "segmentation": {
+        "size": [
+          1512,
+          2688
+        ],
+        "counts": "]RWl1110P_19L2N2O00001N1000000001N10001O0O2M5Ho`N0P[on1"
+      },
+      "area": 239.0,
+      "bbox": [
+        1305.0,
+        158.0,
+        19.0,
+        16.0
+      ],
+      "iscrowd": 0
+    }
+  ],
+  "categories": [
+    {
+      "id": 1,
+      "name": "rotor"
+    },
+    {
+      "id": 2,
+      "name": "frame"
+    },
+    {
+      "id": 3,
+      "name": "camera"
+    },
+    {
+      "id": 4,
+      "name": "landinggear"
+    },
+    {
+      "id": 5,
+      "name": "air2s"
+    },
+    {
+      "id": 6,
+      "name": "neo"
+    },
+    {
+      "id": 7,
+      "name": "mavic3m"
+    },
+    {
+      "id": 8,
+      "name": "mini3pro"
+    }
+  ]
+}
