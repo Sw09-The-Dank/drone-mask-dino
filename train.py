@@ -1,0 +1,1107 @@
+import os
+import random
+import math
+import json
+import numpy as np
+import torch
+from detectron2.engine import HookBase
+
+
+# -----------------------------
+# SANITY CHECK: CUDA
+# -----------------------------
+
+print("PyTorch version:", torch.__version__)
+print("CUDA available:", torch.cuda.is_available())
+print("CUDA version:", torch.version.cuda)
+
+
+# -----------------------------
+# DATASET REGISTRATION (register only the split needed at each phase)
+# -----------------------------
+CLASS_NAMES = ["rotor", "frame", "camera", "landinggear", "air2s", "neo", "mavic3m", "mini3pro"]
+
+
+class CheckpointCleanupHook(HookBase):
+    def __init__(self, output_dir, keep=4):
+        self.output_dir = output_dir
+        self.keep = keep
+    def after_step(self):
+        import glob, os
+        checkpoint_files = sorted(
+            glob.glob(os.path.join(self.output_dir, "model_*.pth")),
+            key=os.path.getmtime,
+            reverse=True
+        )
+        to_delete = checkpoint_files[self.keep:]
+        for ckpt in to_delete:
+            try:
+                os.remove(ckpt)
+                print(f"Deleted old checkpoint: {ckpt}")
+            except Exception as e:
+                print(f"Failed to delete {ckpt}: {e}")
+
+
+print("\n--- TRAINER DEFINITION ---")
+# print_cuda_mem("before TrainerWithDebug instantiation")
+
+def run_default_trainer(train_json_path="output_annotations/train_polygons.json", val_json_path="output_annotations/val_polygons.json", images_root="dataset/images"):
+    try:
+        from detectron2.data.datasets import register_coco_instances
+        from detectron2.engine import DefaultTrainer
+        from detectron2.config import get_cfg
+        from detectron2 import model_zoo
+    except Exception as e:
+        print("[ERROR] detectron2 is required to run the trainer:", e)
+        return
+
+    # Auto-detect images_root if not provided and common path exists
+    if not images_root:
+        candidate = os.path.join("dataset", "images")
+        if os.path.isdir(candidate):
+            images_root = candidate
+
+    # Register datasets if available. Use unique names for polygon-converted JSONs
+    train_name = "drone_train_polygons"
+    val_name = "drone_val_polygons"
+
+    # If images are organized under images_root/train and images_root/val, prefer those
+    train_img_root = images_root
+    val_img_root = images_root
+    train_candidate = os.path.join(images_root, "train")
+    val_candidate = os.path.join(images_root, "val")
+    if os.path.isdir(train_candidate):
+        train_img_root = train_candidate
+    if os.path.isdir(val_candidate):
+        val_img_root = val_candidate
+
+    if os.path.isfile(train_json_path):
+        register_coco_instances(train_name, {}, train_json_path, train_img_root)
+        print(f"Registered {train_name} -> {train_json_path} (images root: {train_img_root})")
+    else:
+        print(f"[WARN] Train JSON not found: {train_json_path}")
+    if os.path.isfile(val_json_path):
+        register_coco_instances(val_name, {}, val_json_path, val_img_root)
+        print(f"Registered {val_name} -> {val_json_path} (images root: {val_img_root})")
+    else:
+        print(f"[WARN] Val JSON not found: {val_json_path}")
+
+    # Load registered dataset dicts and sanitize segmentation entries; then re-register cleaned datasets
+    from detectron2.data import DatasetCatalog, MetadataCatalog
+    # Helper: convert binary mask ndarray -> list of polygons (list of list of floats)
+    def mask_to_polygons(mask_arr, approx_eps=1.0):
+        try:
+            import cv2
+            has_cv2 = True
+        except Exception:
+            cv2 = None
+            has_cv2 = False
+        try:
+            from skimage import measure
+            has_skimage = True
+        except Exception:
+            measure = None
+            has_skimage = False
+
+        m = np.asarray(mask_arr)
+        if m.ndim != 2:
+            return []
+        m = (m > 0).astype('uint8')
+        polys = []
+        if has_cv2:
+            try:
+                contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                for cnt in contours:
+                    cnt = cnt.squeeze()
+                    if cnt.ndim != 2 or cnt.shape[0] < 3:
+                        continue
+                    poly = cnt.flatten().tolist()
+                    if len(poly) >= 6:
+                        polys.append([float(x) for x in poly])
+            except Exception:
+                pass
+        elif has_skimage:
+            try:
+                contours = measure.find_contours(m, 0.5)
+                for c in contours:
+                    # skimage contours are (row, col) -> convert to (x, y)
+                    coords = np.fliplr(c)
+                    poly = coords.flatten().tolist()
+                    if len(poly) >= 6:
+                        polys.append([float(x) for x in poly])
+            except Exception:
+                pass
+        return polys
+    def sanitize_dataset(name, img_root, orig_json_path=None):
+        try:
+            dicts = list(DatasetCatalog.get(name))
+        except Exception:
+            return name
+        clean = []
+        problematic = []
+        for d in dicts:
+            dd = dict(d)
+            fn = dd.get("file_name", "")
+            if not os.path.isabs(fn):
+                # try to resolve relative filenames under img_root
+                candidate = os.path.join(img_root, os.path.basename(fn))
+                if os.path.isfile(candidate):
+                    dd["file_name"] = candidate
+            anns = []
+            for ann in dd.get("annotations", []):
+                ann2 = dict(ann)
+                seg = ann2.get("segmentation")
+                # Handle numpy.ndarray segmentations
+                try:
+                    if isinstance(seg, np.ndarray):
+                        # If it's a 2D mask array, convert to polygons
+                        if getattr(seg, 'ndim', None) == 2:
+                            polys = mask_to_polygons(seg)
+                            if polys:
+                                ann2['segmentation'] = polys
+                                seg = polys
+                            else:
+                                ann2.pop('segmentation', None)
+                                seg = None
+                        else:
+                            # otherwise convert 1D arrays to lists
+                            seg = seg.tolist()
+                except Exception:
+                    pass
+
+                # Detect obviously-bad segmentation types (numpy arrays nested in segmentation)
+                try:
+                    is_numpy_seg = isinstance(seg, np.ndarray) or (
+                        isinstance(seg, list) and any(isinstance(x, np.ndarray) for x in seg)
+                    )
+                except Exception:
+                    is_numpy_seg = False
+                if is_numpy_seg:
+                    # If the segmentation is a list containing numpy arrays, try coercing them to lists
+                    if isinstance(seg, list):
+                        coerced = []
+                        changed = False
+                        for part in seg:
+                            if isinstance(part, np.ndarray):
+                                try:
+                                    arr_list = np.asarray(part).astype(float).flatten().tolist()
+                                    coerced.append([float(x) for x in arr_list])
+                                    changed = True
+                                except Exception:
+                                    coerced.append(part)
+                            else:
+                                coerced.append(part)
+                        if changed:
+                            ann2['segmentation'] = coerced
+                            seg = coerced
+                    # If still contains numpy or otherwise invalid, record and skip
+                    try:
+                        if isinstance(seg, list) and any(isinstance(x, np.ndarray) for x in seg):
+                            problematic.append({
+                                "image_file": dd.get("file_name", ""),
+                                "ann_id": ann2.get("id", None),
+                                "seg_type": str(type(seg)),
+                                "seg_preview": repr(seg)[:200]
+                            })
+                            continue
+                    except Exception:
+                        problematic.append({
+                            "image_file": dd.get("file_name", ""),
+                            "ann_id": ann2.get("id", None),
+                            "seg_type": str(type(seg)),
+                            "seg_preview": repr(seg)[:200]
+                        })
+                        continue
+
+                if isinstance(seg, list):
+                    # COCO allows a single polygon as a flat list; normalize to list of polygons
+                    if len(seg) > 0 and all(not isinstance(x, (list, tuple, np.ndarray)) for x in seg) and all(isinstance(x, (int, float)) for x in seg):
+                        seg = [seg]
+                    new_seg = []
+                    for poly in seg:
+                        try:
+                            # convert numpy arrays or other iterables to plain list of floats
+                            poly_arr = np.asarray(poly).astype(float).flatten()
+                            poly_list = poly_arr.tolist()
+                        except Exception:
+                            poly_list = None
+                        if poly_list and isinstance(poly_list, list) and len(poly_list) >= 6:
+                            new_seg.append([float(x) for x in poly_list])
+                    if new_seg:
+                        ann2["segmentation"] = new_seg
+                    else:
+                        ann2.pop("segmentation", None)
+                # leave RLE dicts as-is
+                anns.append(ann2)
+            dd["annotations"] = anns
+            clean.append(dd)
+        # Write any problematic segmentation entries to disk for inspection
+        if problematic:
+            os.makedirs("output_annotations", exist_ok=True)
+            out_path = os.path.join("output_annotations", "problematic_annotations.json")
+            try:
+                with open(out_path, "w", encoding="utf-8") as pf:
+                    json.dump(problematic, pf, indent=2)
+                print(f"[WARN] Found {len(problematic)} problematic segmentation entries; wrote to {out_path}")
+            except Exception as e:
+                print("[ERROR] Failed to write problematic annotations:", e)
+
+        # If an original COCO JSON path was provided, write a cleaned COCO JSON
+        if orig_json_path is not None:
+            try:
+                cats = []
+                try:
+                    with open(orig_json_path, 'r', encoding='utf-8') as of:
+                        orig = json.load(of)
+                        cats = orig.get('categories', [])
+                except Exception:
+                    cats = []
+                images = []
+                annotations_out = []
+                ann_id = 1
+                # Assign stable image ids and set annotation['image_id'] accordingly
+                for img_idx, img in enumerate(clean, start=1):
+                    img_id = img.get('image_id') or img.get('id') or img_idx
+                    images.append({
+                        'id': img_id,
+                        'file_name': img.get('file_name'),
+                        'height': img.get('height'),
+                        'width': img.get('width')
+                    })
+                    for a in img.get('annotations', []):
+                        a_copy = dict(a)
+                        if a_copy.get('id') is None:
+                            a_copy['id'] = ann_id
+                            ann_id += 1
+                        # ensure annotation references correct image id
+                        a_copy['image_id'] = img_id
+                        seg = a_copy.get('segmentation')
+                        if isinstance(seg, list):
+                            safe_segs = []
+                            for s in seg:
+                                try:
+                                    if isinstance(s, (list, tuple)):
+                                        s_list = [float(x) for x in s]
+                                    else:
+                                        s_list = None
+                                except Exception:
+                                    s_list = None
+                                if s_list and len(s_list) >= 6:
+                                    safe_segs.append(s_list)
+                            if safe_segs:
+                                a_copy['segmentation'] = safe_segs
+                            else:
+                                a_copy.pop('segmentation', None)
+                        annotations_out.append(a_copy)
+                # Fix category_id offset if annotations use 0 but categories start at 1
+                try:
+                    cat_ids = {int(c.get('id')) for c in cats if 'id' in c}
+                except Exception:
+                    cat_ids = set()
+                need_increment = False
+                if annotations_out:
+                    for a in annotations_out:
+                        if a.get('category_id') == 0 and 0 not in cat_ids:
+                            need_increment = True
+                            break
+                if need_increment:
+                    for a in annotations_out:
+                        if 'category_id' in a and isinstance(a['category_id'], (int, float)):
+                            try:
+                                a['category_id'] = int(a['category_id']) + 1
+                            except Exception:
+                                pass
+                    print("[INFO] Incremented annotation 'category_id' values by 1 to match categories ids")
+
+                cleaned = {'images': images, 'annotations': annotations_out, 'categories': cats}
+                base = os.path.splitext(os.path.basename(orig_json_path))[0]
+                cleaned_path = os.path.join('output_annotations', f"{base}_clean.json")
+                with open(cleaned_path, 'w', encoding='utf-8') as cf:
+                    json.dump(cleaned, cf, indent=2)
+                print(f"Wrote cleaned COCO JSON to {cleaned_path}")
+            except Exception as e:
+                print("[ERROR] Failed to write cleaned COCO JSON:", e)
+
+        clean_name = name + "_clean"
+        DatasetCatalog.register(clean_name, lambda d=clean: d)
+        # copy over basic metadata
+        try:
+            meta = MetadataCatalog.get(name)
+            MetadataCatalog.get(clean_name).set(**{k: getattr(meta, k) for k in ["thing_classes", "evaluator_type"] if hasattr(meta, k)})
+        except Exception:
+            pass
+        return clean_name
+
+    train_dataset_name = sanitize_dataset(train_name, train_img_root, train_json_path) if os.path.isfile(train_json_path) else train_name
+    val_dataset_name = sanitize_dataset(val_name, val_img_root, val_json_path) if os.path.isfile(val_json_path) else val_name
+
+    # After writing cleaned JSONs, scan them for any remaining malformed segmentation entries
+    def is_valid_polygon_seg(seg):
+        # valid: list of polygon(s), each polygon is a list of floats with even length >=6
+        if not isinstance(seg, list):
+            return False
+        if len(seg) == 0:
+            return False
+        for poly in seg:
+            if not isinstance(poly, (list, tuple)):
+                return False
+            if len(poly) < 6:
+                return False
+            for x in poly:
+                if not isinstance(x, (int, float)):
+                    return False
+        return True
+
+    def scan_and_filter_clean_json(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                j = json.load(f)
+        except Exception as e:
+            print(f"[WARN] Could not open cleaned JSON {path}: {e}")
+            return None
+        imgs = j.get('images', [])
+        anns = j.get('annotations', [])
+        bad = []
+        for a in anns:
+            seg = a.get('segmentation')
+            if seg is None:
+                continue
+            if not is_valid_polygon_seg(seg):
+                bad.append({'id': a.get('id'), 'image_id': a.get('image_id'), 'seg_type': str(type(seg)), 'seg_preview': repr(seg)[:200]})
+        if bad:
+            os.makedirs('output_annotations', exist_ok=True)
+            report = path.replace('.json', '') + '_problems.json'
+            with open(report, 'w', encoding='utf-8') as rf:
+                json.dump(bad, rf, indent=2)
+            print(f"[WARN] Found {len(bad)} problematic annotations in {path}; wrote {report}")
+            # create a filtered JSON removing bad annotations
+            filtered = {'images': imgs, 'annotations': [a for a in anns if a.get('segmentation') is None or is_valid_polygon_seg(a.get('segmentation'))], 'categories': j.get('categories', [])}
+            out_path = path.replace('.json', '') + '_filtered.json'
+            with open(out_path, 'w', encoding='utf-8') as of:
+                json.dump(filtered, of, indent=2)
+            print(f"Wrote filtered JSON to {out_path}")
+            return out_path
+        else:
+            print(f"No problems found in {path}")
+            return path
+
+    # Scan cleaned outputs if present
+    train_clean_path = os.path.join('output_annotations', os.path.splitext(os.path.basename(train_json_path))[0] + '_clean.json') if os.path.isfile(train_json_path) else None
+    val_clean_path = os.path.join('output_annotations', os.path.splitext(os.path.basename(val_json_path))[0] + '_clean.json') if os.path.isfile(val_json_path) else None
+    if train_clean_path and os.path.isfile(train_clean_path):
+        train_filtered = scan_and_filter_clean_json(train_clean_path)
+        if train_filtered and train_filtered.endswith('_filtered.json'):
+            # register filtered JSON instead
+            try:
+                register_coco_instances(train_name + '_filtered', {}, train_filtered, train_img_root)
+                train_dataset_name = sanitize_dataset(train_name + '_filtered', train_img_root, train_filtered)
+                cfg.DATASETS.TRAIN = (train_dataset_name,)
+                print(f"Using filtered train JSON: {train_filtered}")
+            except Exception as e:
+                print('[WARN] Could not register filtered train JSON:', e)
+    if val_clean_path and os.path.isfile(val_clean_path):
+        val_filtered = scan_and_filter_clean_json(val_clean_path)
+        if val_filtered and val_filtered.endswith('_filtered.json'):
+            try:
+                register_coco_instances(val_name + '_filtered', {}, val_filtered, val_img_root)
+                val_dataset_name = sanitize_dataset(val_name + '_filtered', val_img_root, val_filtered)
+                cfg.DATASETS.TEST = (val_dataset_name,)
+                print(f"Using filtered val JSON: {val_filtered}")
+            except Exception as e:
+                print('[WARN] Could not register filtered val JSON:', e)
+
+    cfg = get_cfg()
+    try:
+        cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
+        cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
+    except Exception:
+        pass
+
+    # Use the sanitized (clean) dataset names for training/testing if available
+    cfg.DATASETS.TRAIN = (train_dataset_name,) if isinstance(train_dataset_name, str) else (train_name,)
+    cfg.DATASETS.TEST = (val_dataset_name,) if isinstance(val_dataset_name, str) else (val_name,)
+    cfg.DATALOADER.NUM_WORKERS = 4
+    cfg.SOLVER.IMS_PER_BATCH = 4
+    cfg.SOLVER.BASE_LR = 0.00025
+    cfg.SOLVER.STEPS = (3000,4000)
+    cfg.SOLVER.MAX_ITER = 10000
+    cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 256
+
+    # Infer number of classes from train JSON categories
+    try:
+        with open(train_json_path, "r", encoding="utf-8") as f:
+            j = json.load(f)
+        cats = j.get("categories", [])
+        if cats:
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(cats)
+            print(f"Set NUM_CLASSES = {len(cats)} from train JSON categories")
+        else:
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
+            print("No categories found in train JSON; defaulting NUM_CLASSES=1")
+    except Exception:
+        cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
+        print("Could not read train JSON to infer NUM_CLASSES; defaulting to 1")
+
+    cfg.OUTPUT_DIR = "output_maskdino/trainer_output"
+    os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
+
+    # For easier debugging of worker exceptions, run dataloader in main process
+    # (set to 0 workers so errors are surfaced here and we can dump problematic data)
+    cfg.DATALOADER.NUM_WORKERS = 0
+
+    # Monkey-patch annotations_to_instances to dump offending annotations on ValueError
+    try:
+        from detectron2.data import detection_utils as dutils
+        _orig_annotations_to_instances = dutils.annotations_to_instances
+        def _wrapped_annotations_to_instances(*args, **kwargs):
+            # annotations may be positional or keyword arg; extract if available
+            annotations = None
+            if "annotations" in kwargs:
+                annotations = kwargs.get("annotations")
+            elif len(args) >= 1:
+                annotations = args[0]
+            try:
+                return _orig_annotations_to_instances(*args, **kwargs)
+            except ValueError as e:
+                try:
+                    os.makedirs("output_annotations", exist_ok=True)
+                    dump_path = os.path.join("output_annotations", "bad_annotations_dump.json")
+                    # Prepare a serializable dump: include types and reprs
+                    dump = []
+                    if isinstance(annotations, (list, tuple)):
+                        for ann in annotations:
+                            dump.append({
+                                "id": ann.get("id") if isinstance(ann, dict) else None,
+                                "seg_type": str(type(ann.get("segmentation"))) if isinstance(ann, dict) else str(type(ann)),
+                                "seg_preview": (repr(ann.get("segmentation"))[:400] if isinstance(ann, dict) else repr(ann)[:400])
+                            })
+                    else:
+                        dump.append({"args_repr": repr(args)[:400], "kwargs_repr": repr(kwargs)[:400]})
+
+                    # Try to capture calling-frame context (dataset_dict, index) to identify the image/iteration
+                    try:
+                        import inspect, datetime
+                        context = {"captured_at": datetime.datetime.utcnow().isoformat()}
+                        # walk the stack to find useful locals: dataset_dict, index vars, and trainer self
+                        for frame_info in inspect.stack():
+                            loc = frame_info.frame.f_locals
+                            if 'dataset_dict' in loc and isinstance(loc['dataset_dict'], dict):
+                                dd = loc['dataset_dict']
+                                # include a small snapshot of the dataset_dict and first annotation if present
+                                snapshot = {'file_name': dd.get('file_name'), 'image_id': dd.get('image_id') or dd.get('id')}
+                                anns = dd.get('annotations') or []
+                                if isinstance(anns, (list, tuple)) and len(anns) > 0:
+                                    a0 = anns[0]
+                                    snapshot['first_annotation_preview'] = {k: a0.get(k) for k in ('id','category_id','bbox') if isinstance(a0, dict)}
+                                context['dataset_dict_snapshot'] = snapshot
+                                # capture index-like variables if available
+                                for key in ('cur_idx', 'cur_index', 'idx', 'index', 'i'):
+                                    if key in loc:
+                                        try:
+                                            context.setdefault('frame_index_vars', {})[key] = int(loc[key])
+                                        except Exception:
+                                            context.setdefault('frame_index_vars', {})[key] = repr(loc[key])
+                                # also try to capture a trainer iteration if present nearby
+                                if 'self' in loc:
+                                    s = loc['self']
+                                    try:
+                                        if hasattr(s, 'iteration'):
+                                            context['trainer_iteration'] = int(getattr(s, 'iteration'))
+                                        elif hasattr(s, 'start_iter'):
+                                            context['trainer_start_iter'] = int(getattr(s, 'start_iter'))
+                                    except Exception:
+                                        pass
+                                break
+                            # also attempt to capture trainer loop iteration from other frames
+                            if 'self' in loc and isinstance(loc['self'], object):
+                                s = loc['self']
+                                try:
+                                    if hasattr(s, 'iteration'):
+                                        context.setdefault('trainer_iteration_candidates', []).append(int(getattr(s, 'iteration')))
+                                except Exception:
+                                    pass
+                        # fallback minimal context
+                        context.setdefault('notes','captured stack scan')
+                    except Exception:
+                        context = {"captured_at": None}
+
+                    out_obj = {"error": str(e), "annotations_dump": dump, "context": context}
+                    with open(dump_path, "w", encoding="utf-8") as df:
+                        json.dump(out_obj, df, indent=2)
+                    print(f"[ERROR] annotations_to_instances failed; dumped annotations+context to {dump_path}")
+                except Exception as dump_e:
+                    print("[ERROR] Failed to dump bad annotations:", dump_e)
+                raise
+        dutils.annotations_to_instances = _wrapped_annotations_to_instances
+    except Exception as e:
+        print("[WARN] Could not monkey-patch annotations_to_instances:", e)
+
+    trainer = DefaultTrainer(cfg)
+    trainer.resume_or_load(resume=True)
+    trainer.train()
+
+    RUN_EVALUATION = True  # Set to True to run evaluation after training
+        # Run evaluation on the validation set using COCOEvaluator if available
+        
+    if RUN_EVALUATION:
+        try:
+            from detectron2.evaluation import COCOEvaluator, inference_on_dataset
+            from detectron2.data import build_detection_test_loader
+            evaluator = COCOEvaluator(val_dataset_name, cfg, distributed=False, output_dir=os.path.join(cfg.OUTPUT_DIR, "inference"))
+            val_loader = build_detection_test_loader(cfg, val_dataset_name)
+            results = inference_on_dataset(trainer.model, val_loader, evaluator)
+            print(f"[INFO] Evaluation results: {results}")
+            # Build a confusion matrix: rows = ground-truth classes + background, cols = predicted classes + background
+            try:
+                import numpy as _np
+                import matplotlib.pyplot as _plt
+                from detectron2.engine import DefaultPredictor
+                meta = MetadataCatalog.get(val_dataset_name)
+                thing_classes = getattr(meta, 'thing_classes', None) or []
+                num_classes = len(thing_classes)
+                if num_classes == 0:
+                    print("[WARN] No thing_classes in metadata; skipping confusion matrix")
+                else:
+                    cm = _np.zeros((num_classes + 1, num_classes + 1), dtype=int)  # last index = background / none
+                    # mapping from dataset category id to contiguous id if available
+                    id_map = getattr(meta, 'thing_dataset_id_to_contiguous_id', None) or {}
+                    predictor = DefaultPredictor(cfg_test)
+                    dicts_for_eval = list(DatasetCatalog.get(val_dataset_name))
+                    def iou_xyxy(boxA, boxB):
+                        # box: [x1,y1,x2,y2]
+                        xA = max(boxA[0], boxB[0]); yA = max(boxA[1], boxB[1]); xB = min(boxA[2], boxB[2]); yB = min(boxA[3], boxB[3])
+                        interW = max(0.0, xB - xA); interH = max(0.0, yB - yA)
+                        inter = interW * interH
+                        areaA = max(0.0, (boxA[2] - boxA[0])) * max(0.0, (boxA[3] - boxA[1]))
+                        areaB = max(0.0, (boxB[2] - boxB[0])) * max(0.0, (boxB[3] - boxB[1]))
+                        union = areaA + areaB - inter
+                        return inter / union if union > 0 else 0.0
+
+                    for d in dicts_for_eval:
+                        img_file = d.get('file_name')
+                        if not img_file or not os.path.isfile(img_file):
+                            continue
+                        try:
+                            import cv2
+                            im = cv2.imread(img_file)
+                            outputs = predictor(im)
+                            inst = outputs.get('instances')
+                            if inst is None or len(inst) == 0:
+                                preds = []
+                            else:
+                                preds = []
+                                boxes = inst.pred_boxes.tensor.cpu().numpy()
+                                classes = inst.pred_classes.cpu().numpy()
+                                scores = inst.scores.cpu().numpy() if hasattr(inst, 'scores') else [1.0] * len(classes)
+                                for bx,cl,sc in zip(boxes, classes, scores):
+                                    preds.append({'box': [float(bx[0]), float(bx[1]), float(bx[2]), float(bx[3])], 'class': int(cl), 'score': float(sc)})
+                            # gather GT boxes and classes
+                            gts = []
+                            for ann in d.get('annotations', []) or []:
+                                if 'bbox' in ann:
+                                    x,y,w,h = ann['bbox']
+                                    gt_box = [float(x), float(y), float(x + w), float(y + h)]
+                                    cat = ann.get('category_id')
+                                    # map dataset id -> contiguous id if mapping exists
+                                    if isinstance(id_map, dict):
+                                        try:
+                                            gt_cls = id_map.get(int(cat), int(cat))
+                                        except Exception:
+                                            gt_cls = int(cat)
+                                    else:
+                                        gt_cls = int(cat)
+                                    gts.append({'box': gt_box, 'class': int(gt_cls)})
+
+                            # match preds to gts by greedy IoU (threshold 0.5)
+                            matched_gt = set()
+                            preds_sorted = sorted(preds, key=lambda x: -x['score'])
+                            for p in preds_sorted:
+                                best_i = -1; best_iou = 0.0
+                                for gi, g in enumerate(gts):
+                                    if gi in matched_gt:
+                                        continue
+                                    iouv = iou_xyxy(p['box'], g['box'])
+                                    if iouv > best_iou:
+                                        best_iou = iouv; best_i = gi
+                                if best_i >= 0 and best_iou >= 0.5:
+                                    gt_cls = gts[best_i]['class']
+                                    pred_cls = p['class']
+                                    if 0 <= gt_cls < num_classes and 0 <= pred_cls < num_classes:
+                                        cm[gt_cls, pred_cls] += 1
+                                    matched_gt.add(best_i)
+                                else:
+                                    # false positive (no matching GT)
+                                    pred_cls = p['class']
+                                    if 0 <= pred_cls < num_classes:
+                                        cm[num_classes, pred_cls] += 1
+                            # any unmatched GTs -> false negatives
+                            for gi, g in enumerate(gts):
+                                if gi not in matched_gt:
+                                    gt_cls = g['class']
+                                    if 0 <= gt_cls < num_classes:
+                                        cm[gt_cls, num_classes] += 1
+                        except Exception:
+                            continue
+
+                    # save confusion matrix as CSV and PNG
+                    os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
+                    labels = list(thing_classes) + ['background']
+                    csv_path = os.path.join(cfg.OUTPUT_DIR, 'confusion_matrix.csv')
+                    try:
+                        import csv as _csv
+                        with open(csv_path, 'w', newline='', encoding='utf-8') as cf:
+                            writer = _csv.writer(cf)
+                            writer.writerow(['GT\\Pred'] + labels)
+                            for i, row in enumerate(cm.tolist()):
+                                writer.writerow([labels[i]] + row)
+                        print(f"Wrote confusion matrix CSV to {csv_path}")
+                    except Exception as e:
+                        print('[WARN] Could not write confusion CSV:', e)
+                    try:
+                        fig, ax = _plt.subplots(figsize=(max(6, num_classes), max(6, num_classes)))
+                        im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
+                        ax.set_xticks(_np.arange(len(labels))); ax.set_yticks(_np.arange(len(labels)))
+                        ax.set_xticklabels(labels, rotation=45, ha='right')
+                        ax.set_yticklabels(labels)
+                        ax.set_xlabel('Predicted'); ax.set_ylabel('Ground truth')
+                        fig.colorbar(im, ax=ax)
+                        fig.tight_layout()
+                        png_path = os.path.join(cfg.OUTPUT_DIR, 'confusion_matrix.png')
+                        fig.savefig(png_path, dpi=150)
+                        _plt.close(fig)
+                        print(f"Wrote confusion matrix image to {png_path}")
+                    except Exception as e:
+                        print('[WARN] Could not render confusion matrix image:', e)
+            except Exception as cm_e:
+                print('[WARN] Failed to compute confusion matrix:', cm_e)
+        except Exception as e:
+            print("[WARN] Evaluation step failed or unavailable:", e)
+            
+        
+        
+        # After training, prefer to use the trainer-produced weights for any predictor/visualization.
+    try:
+        import glob
+        ckpt = None
+        final_pth = os.path.join(cfg.OUTPUT_DIR, "model_final.pth")
+        if os.path.isfile(final_pth):
+            ckpt = final_pth
+        else:
+            # look for model_*.pth and pick the most recent
+            models = glob.glob(os.path.join(cfg.OUTPUT_DIR, "model_*.pth"))
+            if models:
+                models.sort(key=os.path.getmtime, reverse=True)
+                ckpt = models[0]
+            else:
+                # try to read last_checkpoint file if present
+                last_path = os.path.join(cfg.OUTPUT_DIR, "last_checkpoint")
+                if os.path.isfile(last_path):
+                    try:
+                        with open(last_path, 'r', encoding='utf-8') as lf:
+                            content = lf.read().strip()
+                        if os.path.isfile(content):
+                            ckpt = content
+                    except Exception:
+                        pass
+        if ckpt:
+            cfg.MODEL.WEIGHTS = ckpt
+            print(f"[INFO] Using trainer checkpoint for visualization: {ckpt}")
+        else:
+            print("[WARN] No trainer checkpoint found; predictor will use cfg.MODEL.WEIGHTS (may be pretrained checkpoint)")
+    except Exception as e:
+        print("[WARN] Failed to locate trainer checkpoint:", e)
+    # After training, plot training metrics (if available) to visualize losses / lr over iterations
+    try:
+        import glob as _glob
+        metrics_paths = []
+        # common location: cfg.OUTPUT_DIR/metrics.json
+        mpath = os.path.join(cfg.OUTPUT_DIR, 'metrics.json')
+        if os.path.isfile(mpath):
+            metrics_paths.append(mpath)
+        # also search for metrics.json under output dir
+        metrics_paths.extend([p for p in _glob.glob(os.path.join(cfg.OUTPUT_DIR, '**', 'metrics.json'), recursive=True) if os.path.isfile(p) and p not in metrics_paths])
+        if not metrics_paths:
+            # try parent folder
+            parent = os.path.dirname(cfg.OUTPUT_DIR)
+            metrics_paths.extend([p for p in _glob.glob(os.path.join(parent, '**', 'metrics.json'), recursive=True) if os.path.isfile(p)])
+        if metrics_paths:
+            mp = metrics_paths[0]
+            try:
+                import json as _json
+                iters = []
+                total_loss = []
+                loss_cls = []
+                loss_box = []
+                loss_mask = []
+                lrs = []
+                times = []
+                with open(mp, 'r', encoding='utf-8') as mf:
+                    for line in mf:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = _json.loads(line)
+                        except Exception:
+                            continue
+                        if 'iteration' in entry:
+                            iters.append(int(entry.get('iteration', len(iters))))
+                            total_loss.append(float(entry.get('total_loss', float('nan'))))
+                            loss_cls.append(float(entry.get('loss_cls', float('nan'))))
+                            loss_box.append(float(entry.get('loss_box_reg', float('nan'))))
+                            loss_mask.append(float(entry.get('loss_mask', float('nan'))))
+                            lrs.append(float(entry.get('lr', float('nan'))))
+                            times.append(float(entry.get('time', float('nan'))))
+                if iters:
+                    try:
+                        import matplotlib.pyplot as _plt
+                        import numpy as _np
+                        fig, ax = _plt.subplots(figsize=(10, 6))
+                        ax.plot(iters, total_loss, label='total_loss')
+                        ax.plot(iters, loss_cls, label='loss_cls')
+                        ax.plot(iters, loss_box, label='loss_box_reg')
+                        ax.plot(iters, loss_mask, label='loss_mask')
+                        ax.set_xlabel('iteration')
+                        ax.set_ylabel('loss')
+                        ax.legend(loc='upper right')
+                        ax2 = ax.twinx()
+                        ax2.plot(iters, lrs, color='tab:orange', linestyle='--', label='lr')
+                        ax2.set_ylabel('lr')
+                        ax2.legend(loc='upper left')
+                        _plt.tight_layout()
+                        metrics_png = os.path.join(cfg.OUTPUT_DIR, 'metrics_over_time.png')
+                        fig.savefig(metrics_png, dpi=150)
+                        _plt.close(fig)
+                        # also write a CSV of selected metrics
+                        csv_out = os.path.join(cfg.OUTPUT_DIR, 'metrics_over_time.csv')
+                        try:
+                            import csv as _csv
+                            with open(csv_out, 'w', newline='', encoding='utf-8') as cf:
+                                w = _csv.writer(cf)
+                                w.writerow(['iteration','total_loss','loss_cls','loss_box_reg','loss_mask','lr','time'])
+                                for i in range(len(iters)):
+                                    w.writerow([iters[i], total_loss[i], loss_cls[i], loss_box[i], loss_mask[i], lrs[i], times[i]])
+                            print(f"Wrote metrics plot to {metrics_png} and CSV to {csv_out}")
+                        except Exception as e:
+                            print('[WARN] Could not write metrics CSV:', e)
+                    except Exception as e:
+                        print('[WARN] Could not plot metrics:', e)
+            except Exception as e:
+                print('[WARN] Failed to parse metrics file:', e)
+        else:
+            print('[INFO] No metrics.json found; skipping metrics plot')
+    except Exception as e:
+        print('[WARN] Metrics plotting failed:', e)
+
+    print("\n--- TRAINING COMPLETE ---\n")
+    print("Predicting validation grids...")
+    predict_multiple_grids(cfg, val_dataset_name, grid_count=5, per_grid=6, out_prefix="val_grid", score_thresh=0.6, visualizer_scale=1.0, visualizer_min_distance=30, visualizer_y_offset=10)
+
+
+
+def predict_multiple_grids(cfg=None, dataset_name="my_dataset_val", grid_count=5, per_grid=9, out_prefix=None, score_thresh=0.5, visualizer_scale=1.0, visualizer_min_distance=20, visualizer_y_offset=12):
+    """Create `grid_count` separate grids, each containing `per_grid` images.
+
+    - Prefer non-overlapping images across grids when dataset size allows.
+    - Saves files named `<out_prefix>_1.png`, `_2.png`, ... or defaults to cfg.OUTPUT_DIR/val_predictions_grid_<i>.png
+    """
+    try:
+        from detectron2.data import DatasetCatalog
+    except Exception as e:
+        print("[ERROR] detectron2 is required for prediction grids:", e)
+        return
+
+    if cfg is None:
+        cfg = globals().get('TRAINER_CFG') or globals().get('cfg')
+    if cfg is None:
+        print("[ERROR] No cfg available for prediction.")
+        return
+
+    if dataset_name not in DatasetCatalog.list():
+        print(f"[WARN] Dataset '{dataset_name}' not registered. Available: {DatasetCatalog.list()}")
+        return
+
+    dicts = list(DatasetCatalog.get(dataset_name))
+    total_needed = grid_count * per_grid
+    use_non_overlap = len(dicts) >= total_needed
+    if use_non_overlap:
+        random.shuffle(dicts)
+    else:
+        print(f"[WARN] Dataset has {len(dicts)} images; requested {total_needed}. Grids will sample with possible overlap.")
+
+    # Use a cloned cfg for prediction to avoid mutating the training cfg
+    try:
+        cfg_pred = cfg.clone()
+        # allow overriding score threshold for visualization without changing original cfg
+        try:
+            cfg_pred.MODEL.ROI_HEADS.SCORE_THRESH_TEST = float(score_thresh)
+        except Exception:
+            pass
+    except Exception:
+        cfg_pred = cfg
+
+    for gi in range(grid_count):
+        out_file = None
+        # Do not use name_offset in filenames; name_offset controls text position on images
+        if out_prefix:
+            out_file = os.path.join(cfg.OUTPUT_DIR, f"{out_prefix}_{gi+1}.png")
+        else:
+            out_file = os.path.join(cfg.OUTPUT_DIR, f"val_predictions_grid_{gi+1}.png")
+
+        if use_non_overlap:
+            start = gi * per_grid
+            chunk = dicts[start:start + per_grid]
+            # Build a temporary dataset view for sampling
+            samples = chunk
+            # call predict_val_grid but with preselected samples: create a small wrapper
+            _predict_grid_from_samples(
+                cfg_pred,
+                samples,
+                out_file,
+                visualizer_scale=visualizer_scale,
+                visualizer_min_distance=visualizer_min_distance,
+                visualizer_y_offset=visualizer_y_offset,
+            )
+        else:
+            # sample with replacement or random.sample if enough
+            if len(dicts) >= per_grid:
+                samples = random.sample(dicts, per_grid)
+            else:
+                samples = [random.choice(dicts) for _ in range(per_grid)]
+            _predict_grid_from_samples(
+                cfg_pred,
+                samples,
+                out_file,
+                visualizer_scale=visualizer_scale,
+                visualizer_min_distance=visualizer_min_distance,
+                visualizer_y_offset=visualizer_y_offset,
+            )
+
+
+def _predict_grid_from_samples(cfg, samples, out_file, visualizer_scale=1.0, visualizer_min_distance=20, visualizer_y_offset=12):
+    """Render a single grid given `samples` (list of dataset dicts)."""
+    from PIL import Image
+    try:
+        from detectron2.utils.visualizer import Visualizer, ColorMode
+        from detectron2.data import MetadataCatalog
+        from detectron2.data.detection_utils import read_image
+        from detectron2.engine import DefaultPredictor
+    except Exception as e:
+        print("[ERROR] detectron2 is required for prediction grid:", e)
+        return
+
+    # Subclass Visualizer to avoid label collisions and to avoid placing labels on top of boxes/masks
+    class NonCollidingVisualizer(Visualizer):
+        def __init__(self, *args, min_dist=20, y_offset=12, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._used_positions = []
+            self._occupied_rects = []  # list of (x1,y1,x2,y2) tuples where masks/boxes occupy
+            self._min_dist = float(min_dist)
+            self._y_offset = int(y_offset)
+
+        def _distance(self, a, b):
+            return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+        def _point_inside_rect(self, x, y, rect):
+            x1, y1, x2, y2 = rect
+            return x >= x1 and x <= x2 and y >= y1 and y <= y2
+
+        def _point_occupied(self, x, y):
+            # occupied if inside any occupied rect
+            return any(self._point_inside_rect(x, y, r) for r in self._occupied_rects)
+
+        def draw_box(self, box, *args, **kwargs):
+            # record box bounds so labels avoid being placed on top
+            try:
+                import numpy as _np
+                arr = _np.asarray(box)
+                if arr.size >= 4:
+                    x1, y1, x2, y2 = float(arr.flat[0]), float(arr.flat[1]), float(arr.flat[2]), float(arr.flat[3])
+                else:
+                    raise Exception()
+            except Exception:
+                try:
+                    # box may be a sequence
+                    x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+                except Exception:
+                    x1 = y1 = x2 = y2 = 0.0
+
+            # normalize
+            lx, ty, rx, by = min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
+            self._occupied_rects.append((lx, ty, rx, by))
+            return super().draw_box(box, *args, **kwargs)
+
+        def draw_binary_mask(self, binary_mask, color, *, alpha=0.5, **kwargs):
+            # record mask bbox then draw mask
+            try:
+                import numpy as _np
+                arr = _np.asarray(binary_mask)
+                if arr.ndim == 2:
+                    ys, xs = _np.where(arr)
+                    if xs.size and ys.size:
+                        lx, rx = int(xs.min()), int(xs.max())
+                        ty, by = int(ys.min()), int(ys.max())
+                        self._occupied_rects.append((lx, ty, rx, by))
+            except Exception:
+                pass
+            return super().draw_binary_mask(binary_mask, color, alpha=alpha, **kwargs)
+
+        def draw_text(self, text, position, **kwargs):
+            try:
+                x = int(position[0])
+                y = int(position[1])
+            except Exception:
+                return super().draw_text(text, position, **kwargs)
+
+            # Estimate label size (approx) using text length and visualizer scale
+            scale = getattr(self, 'scale', 1.0)
+            label_h = max(10, int(12 * scale))
+            label_w = max(20, int(len(str(text)) * 6 * scale))
+
+            def rects_intersect(a, b):
+                ax1, ay1, ax2, ay2 = a
+                bx1, by1, bx2, by2 = b
+                return not (ax2 < bx1 or ax1 > bx2 or ay2 < by1 or ay1 > by2)
+
+            pad = max(2, int(self._min_dist // 2))
+
+            attempt_y = y
+            while True:
+                # label bbox: assume bottom-left anchor at (x, attempt_y)
+                lab_rect = (x, attempt_y - label_h, x + label_w, attempt_y)
+                # pad occupied rects
+                conflict = False
+                for r in self._occupied_rects:
+                    pr = (r[0] - pad, r[1] - pad, r[2] + pad, r[3] + pad)
+                    if rects_intersect(lab_rect, pr):
+                        conflict = True
+                        break
+
+                if conflict:
+                    attempt_y += self._y_offset
+                    continue
+
+                # also ensure label point isn't too close to previous labels
+                too_close = any(self._distance((x, attempt_y), p) < self._min_dist for p in self._used_positions)
+                if too_close:
+                    attempt_y += self._y_offset
+                    continue
+
+                break
+
+            self._used_positions.append((x, attempt_y))
+            return super().draw_text(text, (x, attempt_y), **kwargs)
+
+    predictor = DefaultPredictor(cfg)
+    # assume samples are valid dataset dicts
+    metadata = MetadataCatalog.get(samples[0].get('dataset_name', 'my_dataset_val')) if samples and 'dataset_name' in samples[0] else MetadataCatalog.get('my_dataset_val')
+    # Ensure metadata has readable `thing_classes` (list of strings). If not, try to use global CLASS_NAMES.
+    try:
+        tc = getattr(metadata, 'thing_classes', None)
+        valid_tc = isinstance(tc, (list, tuple)) and all(isinstance(x, str) for x in tc) and len(tc) > 0
+        if not valid_tc and 'CLASS_NAMES' in globals():
+            try:
+                cls_list = globals().get('CLASS_NAMES')
+                if isinstance(cls_list, (list, tuple)) and all(isinstance(x, str) for x in cls_list):
+                    setattr(metadata, 'thing_classes', list(cls_list))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    pil_images = []
+    # prepare directory to save individual images used for this grid
+    try:
+        base = os.path.splitext(os.path.basename(out_file))[0] if out_file else "prediction_grid"
+    except Exception:
+        base = "prediction_grid"
+    individuals_dir = os.path.join(cfg.OUTPUT_DIR, f"{base}_individuals")
+    try:
+        os.makedirs(individuals_dir, exist_ok=True)
+    except Exception:
+        individuals_dir = None
+
+    for i, d in enumerate(samples):
+        file_name = d.get("file_name")
+        if not file_name:
+            continue
+        try:
+            img_bgr = read_image(file_name, format="BGR")
+        except Exception:
+            img_bgr = read_image(os.path.join(os.getcwd(), file_name), format="BGR")
+        outputs = predictor(img_bgr)
+        img_rgb = img_bgr[:, :, ::-1].copy()
+        vis = NonCollidingVisualizer(
+            img_rgb,
+            metadata=metadata,
+            scale=visualizer_scale,
+            instance_mode=ColorMode.IMAGE,
+            min_dist=visualizer_min_distance,
+            y_offset=visualizer_y_offset,
+        )
+        try:
+            if "instances" in outputs:
+                drawn = vis.draw_instance_predictions(outputs["instances"].to("cpu"))
+            else:
+                drawn = vis
+        except Exception:
+            drawn = vis
+
+        # attempt to extract image (same logic as predict_val_grid)
+        vis_img = None
+        try:
+            if hasattr(drawn, "get_image"):
+                vis_img = drawn.get_image()
+            elif hasattr(drawn, "get_output"):
+                out = drawn.get_output()
+                if hasattr(out, "get_image"):
+                    vis_img = out.get_image()
+                elif isinstance(out, np.ndarray):
+                    vis_img = out
+            elif isinstance(drawn, np.ndarray):
+                vis_img = drawn
+            else:
+                if hasattr(vis, "get_output"):
+                    out = vis.get_output()
+                    if hasattr(out, "get_image"):
+                        vis_img = out.get_image()
+        except Exception:
+            vis_img = None
+
+        if vis_img is None:
+            vis_img = img_rgb
+        pil = Image.fromarray(vis_img)
+        pil_images.append(pil)
+        # save each individual visualized image to the individuals subfolder
+        if individuals_dir:
+            try:
+                orig = os.path.basename(file_name)
+                safe = os.path.splitext(orig)[0]
+                save_name = f"{i+1:02d}_{safe}.png"
+                save_path = os.path.join(individuals_dir, save_name)
+                pil.save(save_path)
+            except Exception as e:
+                print(f"[WARN] Could not save individual image for {file_name}: {e}")
+
+    if not pil_images:
+        print("[WARN] No images rendered for this grid.")
+        return
+
+    cols = 3
+    rows = math.ceil(len(pil_images) / cols)
+    max_w = max(im.width for im in pil_images)
+    max_h = max(im.height for im in pil_images)
+    grid_img = Image.new("RGB", (cols * max_w, rows * max_h), (0, 0, 0))
+    for idx, im in enumerate(pil_images):
+        r = idx // cols
+        c = idx % cols
+        if im.width != max_w or im.height != max_h:
+            im = im.resize((max_w, max_h))
+        grid_img.paste(im, (c * max_w, r * max_h))
+
+    os.makedirs(os.path.dirname(out_file) or cfg.OUTPUT_DIR, exist_ok=True)
+    grid_img.save(out_file)
+    print(f"Saved prediction grid to {out_file}")
+
+
+run_default_trainer()

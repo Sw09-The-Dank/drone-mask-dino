@@ -165,3 +165,13 @@ input/labels/*
 input/images/*
 
 output/*
+
+.conda
+
+output_maskdino/
+
+MaskDino
+detectron2
+
+dataset/bb_labels/*
+dataset/segment_labels/*
