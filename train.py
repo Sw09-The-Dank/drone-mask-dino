@@ -445,9 +445,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     cfg.OUTPUT_DIR = "output_maskdino/trainer_output"
     os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
 
-    # For easier debugging of worker exceptions, run dataloader in main process
-    # (set to 0 workers so errors are surfaced here and we can dump problematic data)
-    cfg.DATALOADER.NUM_WORKERS = 0
+    cfg.DATALOADER.NUM_WORKERS = 8
 
     # Monkey-patch annotations_to_instances to dump offending annotations on ValueError
     try:
@@ -551,129 +549,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
             val_loader = build_detection_test_loader(cfg, val_dataset_name)
             results = inference_on_dataset(trainer.model, val_loader, evaluator)
             print(f"[INFO] Evaluation results: {results}")
-            # Build a confusion matrix: rows = ground-truth classes + background, cols = predicted classes + background
-            try:
-                import numpy as _np
-                import matplotlib.pyplot as _plt
-                from detectron2.engine import DefaultPredictor
-                meta = MetadataCatalog.get(val_dataset_name)
-                thing_classes = getattr(meta, 'thing_classes', None) or []
-                num_classes = len(thing_classes)
-                if num_classes == 0:
-                    print("[WARN] No thing_classes in metadata; skipping confusion matrix")
-                else:
-                    cm = _np.zeros((num_classes + 1, num_classes + 1), dtype=int)  # last index = background / none
-                    # mapping from dataset category id to contiguous id if available
-                    id_map = getattr(meta, 'thing_dataset_id_to_contiguous_id', None) or {}
-                    predictor = DefaultPredictor(cfg_test)
-                    dicts_for_eval = list(DatasetCatalog.get(val_dataset_name))
-                    def iou_xyxy(boxA, boxB):
-                        # box: [x1,y1,x2,y2]
-                        xA = max(boxA[0], boxB[0]); yA = max(boxA[1], boxB[1]); xB = min(boxA[2], boxB[2]); yB = min(boxA[3], boxB[3])
-                        interW = max(0.0, xB - xA); interH = max(0.0, yB - yA)
-                        inter = interW * interH
-                        areaA = max(0.0, (boxA[2] - boxA[0])) * max(0.0, (boxA[3] - boxA[1]))
-                        areaB = max(0.0, (boxB[2] - boxB[0])) * max(0.0, (boxB[3] - boxB[1]))
-                        union = areaA + areaB - inter
-                        return inter / union if union > 0 else 0.0
-
-                    for d in dicts_for_eval:
-                        img_file = d.get('file_name')
-                        if not img_file or not os.path.isfile(img_file):
-                            continue
-                        try:
-                            import cv2
-                            im = cv2.imread(img_file)
-                            outputs = predictor(im)
-                            inst = outputs.get('instances')
-                            if inst is None or len(inst) == 0:
-                                preds = []
-                            else:
-                                preds = []
-                                boxes = inst.pred_boxes.tensor.cpu().numpy()
-                                classes = inst.pred_classes.cpu().numpy()
-                                scores = inst.scores.cpu().numpy() if hasattr(inst, 'scores') else [1.0] * len(classes)
-                                for bx,cl,sc in zip(boxes, classes, scores):
-                                    preds.append({'box': [float(bx[0]), float(bx[1]), float(bx[2]), float(bx[3])], 'class': int(cl), 'score': float(sc)})
-                            # gather GT boxes and classes
-                            gts = []
-                            for ann in d.get('annotations', []) or []:
-                                if 'bbox' in ann:
-                                    x,y,w,h = ann['bbox']
-                                    gt_box = [float(x), float(y), float(x + w), float(y + h)]
-                                    cat = ann.get('category_id')
-                                    # map dataset id -> contiguous id if mapping exists
-                                    if isinstance(id_map, dict):
-                                        try:
-                                            gt_cls = id_map.get(int(cat), int(cat))
-                                        except Exception:
-                                            gt_cls = int(cat)
-                                    else:
-                                        gt_cls = int(cat)
-                                    gts.append({'box': gt_box, 'class': int(gt_cls)})
-
-                            # match preds to gts by greedy IoU (threshold 0.5)
-                            matched_gt = set()
-                            preds_sorted = sorted(preds, key=lambda x: -x['score'])
-                            for p in preds_sorted:
-                                best_i = -1; best_iou = 0.0
-                                for gi, g in enumerate(gts):
-                                    if gi in matched_gt:
-                                        continue
-                                    iouv = iou_xyxy(p['box'], g['box'])
-                                    if iouv > best_iou:
-                                        best_iou = iouv; best_i = gi
-                                if best_i >= 0 and best_iou >= 0.5:
-                                    gt_cls = gts[best_i]['class']
-                                    pred_cls = p['class']
-                                    if 0 <= gt_cls < num_classes and 0 <= pred_cls < num_classes:
-                                        cm[gt_cls, pred_cls] += 1
-                                    matched_gt.add(best_i)
-                                else:
-                                    # false positive (no matching GT)
-                                    pred_cls = p['class']
-                                    if 0 <= pred_cls < num_classes:
-                                        cm[num_classes, pred_cls] += 1
-                            # any unmatched GTs -> false negatives
-                            for gi, g in enumerate(gts):
-                                if gi not in matched_gt:
-                                    gt_cls = g['class']
-                                    if 0 <= gt_cls < num_classes:
-                                        cm[gt_cls, num_classes] += 1
-                        except Exception:
-                            continue
-
-                    # save confusion matrix as CSV and PNG
-                    os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
-                    labels = list(thing_classes) + ['background']
-                    csv_path = os.path.join(cfg.OUTPUT_DIR, 'confusion_matrix.csv')
-                    try:
-                        import csv as _csv
-                        with open(csv_path, 'w', newline='', encoding='utf-8') as cf:
-                            writer = _csv.writer(cf)
-                            writer.writerow(['GT\\Pred'] + labels)
-                            for i, row in enumerate(cm.tolist()):
-                                writer.writerow([labels[i]] + row)
-                        print(f"Wrote confusion matrix CSV to {csv_path}")
-                    except Exception as e:
-                        print('[WARN] Could not write confusion CSV:', e)
-                    try:
-                        fig, ax = _plt.subplots(figsize=(max(6, num_classes), max(6, num_classes)))
-                        im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
-                        ax.set_xticks(_np.arange(len(labels))); ax.set_yticks(_np.arange(len(labels)))
-                        ax.set_xticklabels(labels, rotation=45, ha='right')
-                        ax.set_yticklabels(labels)
-                        ax.set_xlabel('Predicted'); ax.set_ylabel('Ground truth')
-                        fig.colorbar(im, ax=ax)
-                        fig.tight_layout()
-                        png_path = os.path.join(cfg.OUTPUT_DIR, 'confusion_matrix.png')
-                        fig.savefig(png_path, dpi=150)
-                        _plt.close(fig)
-                        print(f"Wrote confusion matrix image to {png_path}")
-                    except Exception as e:
-                        print('[WARN] Could not render confusion matrix image:', e)
-            except Exception as cm_e:
-                print('[WARN] Failed to compute confusion matrix:', cm_e)
+           
         except Exception as e:
             print("[WARN] Evaluation step failed or unavailable:", e)
             
@@ -735,6 +611,10 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                 loss_mask = []
                 lrs = []
                 times = []
+                # mask_rcnn metrics to collect if present
+                mask_acc = []
+                mask_fn = []
+                mask_fp = []
                 with open(mp, 'r', encoding='utf-8') as mf:
                     for line in mf:
                         line = line.strip()
@@ -752,6 +632,10 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                             loss_mask.append(float(entry.get('loss_mask', float('nan'))))
                             lrs.append(float(entry.get('lr', float('nan'))))
                             times.append(float(entry.get('time', float('nan'))))
+                            # collect mask_rcnn metrics when present
+                            mask_acc.append(float(entry.get('mask_rcnn/accuracy', float('nan'))))
+                            mask_fn.append(float(entry.get('mask_rcnn/false_negative', float('nan'))))
+                            mask_fp.append(float(entry.get('mask_rcnn/false_positive', float('nan'))))
                 if iters:
                     try:
                         import matplotlib.pyplot as _plt
@@ -768,6 +652,40 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                         ax2.plot(iters, lrs, color='tab:orange', linestyle='--', label='lr')
                         ax2.set_ylabel('lr')
                         ax2.legend(loc='upper left')
+                        # Plot mask_rcnn metrics (accuracy / false_negative / false_positive) if available
+                        try:
+                            any_mask = any(not (_np.isnan(x)) for x in mask_acc + mask_fn + mask_fp)
+                        except Exception:
+                            any_mask = False
+                        if any_mask:
+                            fig2, axm = _plt.subplots(figsize=(10, 5))
+                            plotted = False
+                            try:
+                                axm.plot(iters, mask_acc, label='mask_rcnn/accuracy')
+                                plotted = True
+                            except Exception:
+                                pass
+                            try:
+                                axm.plot(iters, mask_fp, linestyle='--', label='mask_rcnn/false_positive')
+                                plotted = True
+                            except Exception:
+                                pass
+                            try:
+                                axm.plot(iters, mask_fn, linestyle=':', label='mask_rcnn/false_negative')
+                                plotted = True
+                            except Exception:
+                                pass
+                            if plotted:
+                                axm.set_title('Mask R-CNN: accuracy / false positive / false negative')
+                                axm.set_xlabel('iteration')
+                                axm.set_ylabel('metric')
+                                axm.legend(loc='best')
+                                acc_out = os.path.join(cfg.OUTPUT_DIR, 'metrics_mask_rcnn.png')
+                                fig2.tight_layout()
+                                fig2.savefig(acc_out, dpi=150)
+                                _plt.close(fig2)
+                                print(f"Saved mask_rcnn metrics plot to {acc_out}")
+
                         _plt.tight_layout()
                         metrics_png = os.path.join(cfg.OUTPUT_DIR, 'metrics_over_time.png')
                         fig.savefig(metrics_png, dpi=150)
@@ -776,11 +694,13 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                         csv_out = os.path.join(cfg.OUTPUT_DIR, 'metrics_over_time.csv')
                         try:
                             import csv as _csv
+                            headers = ['iteration','total_loss','loss_cls','loss_box_reg','loss_mask','lr','time','mask_rcnn/accuracy','mask_rcnn/false_negative','mask_rcnn/false_positive']
                             with open(csv_out, 'w', newline='', encoding='utf-8') as cf:
                                 w = _csv.writer(cf)
-                                w.writerow(['iteration','total_loss','loss_cls','loss_box_reg','loss_mask','lr','time'])
+                                w.writerow(headers)
                                 for i in range(len(iters)):
-                                    w.writerow([iters[i], total_loss[i], loss_cls[i], loss_box[i], loss_mask[i], lrs[i], times[i]])
+                                    row = [iters[i], total_loss[i], loss_cls[i], loss_box[i], loss_mask[i], lrs[i], times[i], mask_acc[i], mask_fn[i], mask_fp[i]]
+                                    w.writerow(row)
                             print(f"Wrote metrics plot to {metrics_png} and CSV to {csv_out}")
                         except Exception as e:
                             print('[WARN] Could not write metrics CSV:', e)
@@ -795,7 +715,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
 
     print("\n--- TRAINING COMPLETE ---\n")
     print("Predicting validation grids...")
-    predict_multiple_grids(cfg, val_dataset_name, grid_count=5, per_grid=6, out_prefix="val_grid", score_thresh=0.6, visualizer_scale=1.0, visualizer_min_distance=30, visualizer_y_offset=10)
+    predict_multiple_grids(cfg, val_dataset_name, grid_count=1, per_grid=6, out_prefix="val_grid", score_thresh=0.6, visualizer_scale=1.0, visualizer_min_distance=30, visualizer_y_offset=10)
 
 
 
