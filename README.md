@@ -21,3 +21,9 @@ cd MaskDINO/maskdino/modeling/pixel_decoder/ops
 rm -rf build *.so *.egg-info
 bash make.sh
 cd ../../../../../
+
+
+
+Modify annotations:
+# Create new category 'bird' and copy drone segmentations to it when 'neo' is on same image
+python scripts/modify_segment_category.py --input output_annotations/train_polygons.json --output output_annotations/train_polygons_cat.json --from-category camera --to-category neo_camera --create-category neo_camera --copy --filter-category neo

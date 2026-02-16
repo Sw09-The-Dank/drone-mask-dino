@@ -424,7 +424,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     cfg.SOLVER.IMS_PER_BATCH = 4
     cfg.SOLVER.BASE_LR = 0.00025
     cfg.SOLVER.STEPS = (3000,4000)
-    cfg.SOLVER.MAX_ITER = 10000
+    cfg.SOLVER.MAX_ITER = 10100
     cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 256
 
     # Infer number of classes from train JSON categories

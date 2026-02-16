@@ -1,0 +1,13 @@
+# runtime python deps (detectron2 installed separately from source to match CUDA/PyTorch)
+opencv-python-headless
+matplotlib
+scikit-image
+setuptools
+pycocotools
+fvcore
+iopath
+termcolor
+yacs
+tqdm
+Pillow
+tensorboard
