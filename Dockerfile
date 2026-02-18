@@ -24,6 +24,24 @@ WORKDIR /workspace
 # Copy requirements before the rest of the repository for Docker cache efficiency
 COPY requirements.txt /workspace/requirements.txt
 
+# Install NCCL runtime and development packages for multi-node GPU collectives
+# Add the official NVIDIA apt repository (Ubuntu 24.04) and install matching
+# `libnccl2` and `libnccl-dev`. This ensures NCCL matches the CUDA toolkit
+# present in the base image. If your environment already provides NCCL (DGX
+# images usually do), this step is safe and will be a no-op.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gnupg2 curl ca-certificates; \
+    mkdir -p /etc/apt/keyrings; \
+    # Fetch NVIDIA repo signing key and add it (key may change; fallback to continue)
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
+        | gpg --dearmor -o /etc/apt/keyrings/nvidia-archive-keyring.gpg || true; \
+    echo "deb [signed-by=/etc/apt/keyrings/nvidia-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
+        > /etc/apt/sources.list.d/nvidia-cuda.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends libnccl2 libnccl-dev || true; \
+    rm -rf /var/lib/apt/lists/*;
+
 # Create virtualenv and install CUDA-enabled PyTorch (CUDA 13 wheels) and other deps via pip
 RUN python3.11 -m venv /opt/venv \
     && /opt/venv/bin/python -m pip install --upgrade pip setuptools wheel \

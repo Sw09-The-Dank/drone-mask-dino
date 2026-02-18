@@ -10,7 +10,7 @@ docker build -t drone-maskdino:latest .
 Pull base image separately (optional, helps diagnose network/auth issues):
 
 ```bash
-docker pull nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
+docker pull nvidia/cuda:13.1.1-cudnn-devel-ubuntu24.04
 ```
 
 Run examples
@@ -91,4 +91,62 @@ Notes & troubleshooting
 - `--gpus all` requires NVIDIA drivers and NVIDIA Container Toolkit (or Docker Desktop WSL GPU support). If `nvidia-smi` fails, check host `nvidia-smi` first.
 - Building step compiles `detectron2` from source — allow several minutes and ensure `cmake`, `gcc`, and CUDA toolkit are present.
 - To avoid long builds, you can use prebuilt wheels for `detectron2` matching your `torch`/CUDA versions; ask me to pin specific versions for your host drivers.
+
+Multi-node DDP (2 DGX nodes)
+--------------------------------
+This repository includes `scripts/launch_ddp.sh`, a small wrapper that runs
+PyTorch's torch.distributed launcher (`torch.distributed.run`) and sets common
+NCCL tuning environment variables. Build the image with NCCL present (the
+`Dockerfile` installs NVIDIA's NCCL packages from the NVIDIA apt repo).
+
+Example (2 nodes, 8 GPUs per node).
+- Build the image on both hosts (or push/pull to a shared registry):
+
+```bash
+docker build -t drone-maskdino:latest .
+```
+
+- Run on the master node (replace `MASTER_IP` with the master node IP):
+
+```bash
+docker run --gpus all --rm -it --network=host \
+  -v "$(pwd):/workspace" -w /workspace \
+  drone-maskdino:latest \
+  /bin/bash -lc "./scripts/launch_ddp.sh 2 8 0 MASTER_IP 29500 --"
+```
+
+- Run on the worker node:
+
+```bash
+docker run --gpus all --rm -it --network=host \
+  -v "$(pwd):/workspace" -w /workspace \
+  drone-maskdino:latest \
+  /bin/bash -lc "./scripts/launch_ddp.sh 2 8 1 MASTER_IP 29500 --"
+```
+
+Quick single-node master test (1 GPU)
+----------------------------------
+To quickly verify the distributed setup and NCCL networking without bringing up a second node, run the launcher on a single host with one GPU:
+
+```bash
+docker run --gpus "device=0" --rm -it --network=host \
+  -v "$(pwd):/workspace" -w /workspace \
+  drone-maskdino:latest \
+  /bin/bash -lc "./scripts/launch_ddp.sh 1 1 0 127.0.0.1 29500 --"
+```
+
+Notes:
+- `2` = number of nodes (`--nnodes`), `8` = GPUs per node (`--nproc_per_node`).
+- `MASTER_IP` should be reachable from the worker; use a private cluster IP.
+- `--network=host` avoids container networking/NAT issues for rendezvous ports.
+- You can override NCCL tuning variables by exporting them before running:
+
+```bash
+export NCCL_DEBUG=INFO
+export NCCL_SOCKET_IFNAME=eth0   # or mlx5_0 for InfiniBand
+export NCCL_IB_DISABLE=0         # 1 to disable InfiniBand if not used
+```
+
+- If your cluster provides an internal container image with NCCL preinstalled
+  (DGX images / NVIDIA NGC), prefer that base image and skip the NCCL install.
 

@@ -1024,4 +1024,8 @@ def _predict_grid_from_samples(cfg, samples, out_file, visualizer_scale=1.0, vis
     print(f"Saved prediction grid to {out_file}")
 
 
-run_default_trainer()
+if __name__ == "__main__":
+    # When launched under torch.distributed.run (torchrun), each process
+    # will execute this file. Guard the top-level call so importing the
+    # module doesn't start training unintentionally.
+    run_default_trainer()
