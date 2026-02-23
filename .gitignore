@@ -175,5 +175,5 @@ detectron2
 
 dataset/bb_labels/*
 dataset/segment_labels/*
-dataset/images/*
+# dataset/images/*
 MaskDino/

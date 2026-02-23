@@ -75,6 +75,23 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     if os.path.isdir(val_candidate):
         val_img_root = val_candidate
 
+    # Fallbacks: some setups place images under top-level `images/` instead of `dataset/images/`.
+    # If the chosen img roots do not exist or contain few files, try common alternate locations.
+    def _choose_existing_root(preferred, alternates):
+        if isinstance(preferred, str) and os.path.isdir(preferred) and len(os.listdir(preferred))>0:
+            return preferred
+        for a in alternates:
+            try:
+                if os.path.isdir(a) and len(os.listdir(a))>0:
+                    return a
+            except Exception:
+                continue
+        # last resort: return preferred even if empty
+        return preferred
+
+    train_img_root = _choose_existing_root(train_img_root, [os.path.join('images','train'), 'images', os.path.join('dataset','images','train')])
+    val_img_root = _choose_existing_root(val_img_root, [os.path.join('images','val'), 'images', os.path.join('dataset','images','val')])
+
     if os.path.isfile(train_json_path):
         register_coco_instances(train_name, {}, train_json_path, train_img_root)
         print(f"Registered {train_name} -> {train_json_path} (images root: {train_img_root})")
@@ -489,7 +506,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     cfg.SOLVER.IMS_PER_BATCH = 4
     cfg.SOLVER.BASE_LR = 0.00025
     cfg.SOLVER.STEPS = (3000,4000)
-    cfg.SOLVER.MAX_ITER = 10100
+    cfg.SOLVER.MAX_ITER = 10000
     cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 256
 
     # Infer number of classes from train JSON categories

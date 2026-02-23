@@ -132,7 +132,11 @@ docker run --gpus all --rm -it --network=host \
   drone-maskdino:latest \
   /bin/bash -lc "./scripts/launch_ddp.sh 2 8 1 MASTER_IP 29500 --"
 ```
-
+Notes:
+- `2` = number of nodes (`--nnodes`), `8` = GPUs per node (`--nproc_per_node`).
+- `MASTER_IP` should be reachable from the worker; use a private cluster IP.
+- `--network=host` avoids container networking/NAT issues for rendezvous ports.
+- You can override NCCL tuning variables by exporting them before running:
 Quick single-node master test (1 GPU)
 ----------------------------------
 To quickly verify the distributed setup and NCCL networking without bringing up a second node, run the launcher on a single host with one GPU:
@@ -147,14 +151,10 @@ docker run --gpus "device=0" --rm -it --network=host \
 sudo docker run --gpus "device=0" --rm -it --network=host \
   -v "$(pwd):/workspace" -w /workspace \
   drone-maskdino:latest \
-  /bin/bash -lc "./scripts/launch_ddp.sh 1 1 0 169.254.18.231 29500 --"
+  /bin/bash -lc "bash ./scripts/launch_ddp.sh 1 1 0 169.254.18.231 29500 --"
 ```
 
-Notes:
-- `2` = number of nodes (`--nnodes`), `8` = GPUs per node (`--nproc_per_node`).
-- `MASTER_IP` should be reachable from the worker; use a private cluster IP.
-- `--network=host` avoids container networking/NAT issues for rendezvous ports.
-- You can override NCCL tuning variables by exporting them before running:
+
 
 ```bash
 export NCCL_DEBUG=INFO
@@ -165,3 +165,86 @@ export NCCL_IB_DISABLE=0         # 1 to disable InfiniBand if not used
 - If your cluster provides an internal container image with NCCL preinstalled
   (DGX images / NVIDIA NGC), prefer that base image and skip the NCCL install.
 
+Run tips: shared memory, IPC, CUDA forward-compatibility, and ulimits
+---------------------------------------------------------------
+
+- NOTE: you may see a CUDA forward-compatibility message such as:
+  "CUDA Forward Compatibility mode ENABLED. Using CUDA 13.1 driver version X
+  with kernel driver version Y." This is usually acceptable; only act if you
+  hit runtime CUDA errors. See https://docs.nvidia.com/deploy/cuda-compatibility/.
+
+- PyTorch multiprocessing and NCCL can require more shared memory than the
+  Docker default (64MB). If you see hangs, NCCL errors, or process stalls,
+  increase shared memory or use the host IPC namespace. Two common options:
+
+  1) Prefer full host IPC (simplest; less isolation):
+
+```bash
+docker run --gpus all --rm -it \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -v "$(pwd):/workspace" -w /workspace \
+  drone-maskdino:latest \
+  /bin/bash -lc "nvidia-smi && bash ./scripts/launch_ddp.sh 1 1 0 169.254.18.231 29500 --"
+```
+
+  2) If you prefer to keep IPC isolation, increase `/dev/shm` instead:
+
+```bash
+docker run --gpus all --rm -it --shm-size=1g \
+  --ulimit memlock=-1 --ulimit stack=67108864 \
+  -v "$(pwd):/workspace" -w /workspace drone-maskdino:latest \
+  /bin/bash -lc "python train.py"
+```
+
+- `--ulimit memlock=-1` and `--ulimit stack=67108864` are recommended to
+  avoid pinned-memory or large-stack failures during training.
+
+- Security/performance tradeoff: `--ipc=host` reduces container isolation.
+  Use `--shm-size` when isolation is required or when running on multi-tenant
+  hosts.
+
+
+
+Not working
+Master
+```bash
+sudo docker run --gpus all --rm -it \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -v "$(pwd):/workspace" -w /workspace \
+  drone-maskdino:latest \
+  /bin/bash -lc "nvidia-smi && bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500 --"
+```
+
+Worker
+```bash
+sudo docker run --gpus all --rm -it \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -v "$(pwd):/workspace" -w /workspace \
+  drone-maskdino:latest \
+  /bin/bash -lc "nvidia-smi && bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500 --"
+```
+
+working!
+master
+```bash
+sudo docker run --gpus all --rm -it --network=host --ipc=host \
+  -e NCCL_DEBUG=INFO -e NCCL_SOCKET_IFNAME=enp1s0f1np1 -e NCCL_IB_DISABLE=0 \
+  -v "$(pwd):/workspace" -w /workspace \
+  drone-maskdino:latest \
+  /bin/bash -lc "bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500 --"
+```
+
+worker
+```bash
+sudo docker run --gpus all --rm -it --network=host --ipc=host \
+  -e NCCL_DEBUG=INFO -e NCCL_SOCKET_IFNAME=enp1s0f0np0 -e NCCL_IB_DISABLE=0 \
+  -v "$(pwd):/workspace" -w /workspace \
+  drone-maskdino:latest \
+  /bin/bash -lc "bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500 --"
+```
