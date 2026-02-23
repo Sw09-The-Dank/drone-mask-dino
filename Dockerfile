@@ -1,4 +1,4 @@
-FROM nvidia/cuda:13.1.1-cudnn-devel-ubuntu24.04
+FROM nvcr.io/nvidia/pytorch:26.01-py3
 
 ENV DEBIAN_FRONTEND=noninteractive
 LABEL maintainer="" \
@@ -42,14 +42,11 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends libnccl2 libnccl-dev || true; \
     rm -rf /var/lib/apt/lists/*;
 
-# Create virtualenv and install CUDA-enabled PyTorch (CUDA 13 wheels) and other deps via pip
-RUN python3.11 -m venv /opt/venv \
+# Create virtualenv and install runtime Python deps via pip. PyTorch with CUDA
+# is provided by the chosen NVIDIA PyTorch base image, so we do not re-install it here.
+RUN python -m venv /opt/venv --system-site-packages \
     && /opt/venv/bin/python -m pip install --upgrade pip setuptools wheel \
-        # Install PyTorch wheels for CUDA 13 (nightly cu131). Fail build if unavailable.
-         # Allow pre-release/nightly wheels and use extra-index-url so pip can find cu131 builds
-         && /opt/venv/bin/pip install --pre --extra-index-url https://download.pytorch.org/whl/nightly/cu131 --no-cache-dir \
-             torch torchvision torchaudio \
-        && /opt/venv/bin/pip install -r /workspace/requirements.txt
+    && /opt/venv/bin/pip install -r /workspace/requirements.txt
 
 # Ensure the virtualenv has setuptools (provides pkg_resources) so imports
 # from the venv (used at runtime) don't fail. Also upgrade system pip/setuptools
@@ -71,10 +68,8 @@ ENV PATH=/opt/venv/bin:${PATH}
 RUN ln -sf /opt/venv/bin/python /usr/local/bin/python \
     && ln -sf /opt/venv/bin/pip /usr/local/bin/pip || true
 
-# Force-reinstall a stable setuptools into the venv and verify pkg_resources
-# so runtime imports succeed.
-RUN /opt/venv/bin/pip install --no-cache-dir --force-reinstall "setuptools==65.6.3" || /opt/venv/bin/pip install --no-cache-dir --force-reinstall setuptools || true \
-    && /opt/venv/bin/python -c "import pkg_resources; print('BUILD-CHECK pkg_resources OK', getattr(pkg_resources,'__file__',None))"
+# Verify setuptools/pkg_resources are importable in the venv (do not downgrade on Python 3.12+).
+RUN /opt/venv/bin/python -c "import setuptools, pkg_resources; print('BUILD-CHECK setuptools', setuptools.__version__, 'pkg_resources OK', getattr(pkg_resources,'__file__',None))"
 
 # Default command: run training script using the created virtualenv
 CMD ["/opt/venv/bin/python", "train.py"]

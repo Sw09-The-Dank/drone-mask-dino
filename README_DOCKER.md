@@ -1,9 +1,18 @@
 # Docker / GPU usage for this repository
 
 
-Build image (from repository root):
+Build image (from repository root)
+
+- Linux / WSL:
 
 ```bash
+# If your user requires sudo to access the Docker daemon
+sudo docker build -t drone-maskdino:latest .
+```
+
+- Windows (PowerShell / CMD):
+
+```powershell
 docker build -t drone-maskdino:latest .
 ```
 
@@ -132,7 +141,13 @@ To quickly verify the distributed setup and NCCL networking without bringing up 
 docker run --gpus "device=0" --rm -it --network=host \
   -v "$(pwd):/workspace" -w /workspace \
   drone-maskdino:latest \
-  /bin/bash -lc "./scripts/launch_ddp.sh 1 1 0 127.0.0.1 29500 --"
+  /bin/bash -lc "./scripts/launch_ddp.sh 1 1 0 169.254.18.231 29500 --"
+```
+```bash
+sudo docker run --gpus "device=0" --rm -it --network=host \
+  -v "$(pwd):/workspace" -w /workspace \
+  drone-maskdino:latest \
+  /bin/bash -lc "./scripts/launch_ddp.sh 1 1 0 169.254.18.231 29500 --"
 ```
 
 Notes:
