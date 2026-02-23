@@ -262,9 +262,37 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                 # Assign stable image ids and set annotation['image_id'] accordingly
                 for img_idx, img in enumerate(clean, start=1):
                     img_id = img.get('image_id') or img.get('id') or img_idx
+                    # Ensure file_name is relative to the images root used when registering the dataset.
+                    raw_fn = img.get('file_name') or ''
+                    try:
+                        # normalize separators
+                        fn_norm = raw_fn.replace('\\', '/').lstrip('./')
+                        # if fn_norm already contains the img_root prefix, strip it
+                        if isinstance(img_root, str) and img_root:
+                            img_root_norm = img_root.replace('\\', '/').rstrip('/')
+                        else:
+                            img_root_norm = ''
+                        rel_fn = None
+                        if img_root_norm and fn_norm.startswith(img_root_norm):
+                            rel_fn = fn_norm[len(img_root_norm):].lstrip('/')
+                        else:
+                            # try to compute a relative path if possible
+                            try:
+                                rel = os.path.relpath(fn_norm, img_root_norm or '.')
+                                # if rel does not climb above img_root, use it
+                                if not rel.startswith('..'):
+                                    rel_fn = rel.replace('\\', '/')
+                            except Exception:
+                                rel_fn = None
+                        if not rel_fn or rel_fn == '.' or rel_fn.startswith('..'):
+                            # fallback to basename so load_coco_json will join correctly
+                            rel_fn = os.path.basename(fn_norm)
+                    except Exception:
+                        rel_fn = os.path.basename(raw_fn)
+
                     images.append({
                         'id': img_id,
-                        'file_name': img.get('file_name'),
+                        'file_name': rel_fn,
                         'height': img.get('height'),
                         'width': img.get('width')
                     })

@@ -2,721 +2,721 @@
   "images": [
     {
       "id": 1,
-      "file_name": "dataset/images/val/f100.jpg",
+      "file_name": "f100.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 2,
-      "file_name": "dataset/images/val/f101.jpg",
+      "file_name": "f101.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 3,
-      "file_name": "dataset/images/val/f102.jpg",
+      "file_name": "f102.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 4,
-      "file_name": "dataset/images/val/f103.jpg",
+      "file_name": "f103.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 5,
-      "file_name": "dataset/images/val/f104.jpg",
+      "file_name": "f104.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 6,
-      "file_name": "dataset/images/val/f105.jpg",
+      "file_name": "f105.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 7,
-      "file_name": "dataset/images/val/f106.jpg",
+      "file_name": "f106.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 8,
-      "file_name": "dataset/images/val/f107.jpg",
+      "file_name": "f107.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 9,
-      "file_name": "dataset/images/val/f108.jpg",
+      "file_name": "f108.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 10,
-      "file_name": "dataset/images/val/f109.jpg",
+      "file_name": "f109.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 11,
-      "file_name": "dataset/images/val/f110.jpg",
+      "file_name": "f110.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 12,
-      "file_name": "dataset/images/val/f111.jpg",
+      "file_name": "f111.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 13,
-      "file_name": "dataset/images/val/f112.jpg",
+      "file_name": "f112.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 14,
-      "file_name": "dataset/images/val/f113.jpg",
+      "file_name": "f113.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 15,
-      "file_name": "dataset/images/val/f114.jpg",
+      "file_name": "f114.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 16,
-      "file_name": "dataset/images/val/f115.jpg",
+      "file_name": "f115.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 17,
-      "file_name": "dataset/images/val/f116.jpg",
+      "file_name": "f116.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 18,
-      "file_name": "dataset/images/val/f117.jpg",
+      "file_name": "f117.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 19,
-      "file_name": "dataset/images/val/f118.jpg",
+      "file_name": "f118.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 20,
-      "file_name": "dataset/images/val/f119.jpg",
+      "file_name": "f119.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 21,
-      "file_name": "dataset/images/val/f326.jpg",
+      "file_name": "f326.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 22,
-      "file_name": "dataset/images/val/f327.jpg",
+      "file_name": "f327.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 23,
-      "file_name": "dataset/images/val/f328.jpg",
+      "file_name": "f328.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 24,
-      "file_name": "dataset/images/val/f329.jpg",
+      "file_name": "f329.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 25,
-      "file_name": "dataset/images/val/f330.jpg",
+      "file_name": "f330.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 26,
-      "file_name": "dataset/images/val/f331.jpg",
+      "file_name": "f331.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 27,
-      "file_name": "dataset/images/val/f332.jpg",
+      "file_name": "f332.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 28,
-      "file_name": "dataset/images/val/f333.jpg",
+      "file_name": "f333.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 29,
-      "file_name": "dataset/images/val/f334.jpg",
+      "file_name": "f334.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 30,
-      "file_name": "dataset/images/val/f335.jpg",
+      "file_name": "f335.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 31,
-      "file_name": "dataset/images/val/f336.jpg",
+      "file_name": "f336.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 32,
-      "file_name": "dataset/images/val/f337.jpg",
+      "file_name": "f337.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 33,
-      "file_name": "dataset/images/val/f338.jpg",
+      "file_name": "f338.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 34,
-      "file_name": "dataset/images/val/f339.jpg",
+      "file_name": "f339.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 35,
-      "file_name": "dataset/images/val/f340.jpg",
+      "file_name": "f340.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 36,
-      "file_name": "dataset/images/val/f341.jpg",
+      "file_name": "f341.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 37,
-      "file_name": "dataset/images/val/f342.jpg",
+      "file_name": "f342.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 38,
-      "file_name": "dataset/images/val/f343.jpg",
+      "file_name": "f343.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 39,
-      "file_name": "dataset/images/val/f344.jpg",
+      "file_name": "f344.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 40,
-      "file_name": "dataset/images/val/f345.jpg",
+      "file_name": "f345.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 41,
-      "file_name": "dataset/images/val/f346.jpg",
+      "file_name": "f346.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 42,
-      "file_name": "dataset/images/val/f347.jpg",
+      "file_name": "f347.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 43,
-      "file_name": "dataset/images/val/f348.jpg",
+      "file_name": "f348.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 44,
-      "file_name": "dataset/images/val/f349.jpg",
+      "file_name": "f349.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 45,
-      "file_name": "dataset/images/val/f350.jpg",
+      "file_name": "f350.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 46,
-      "file_name": "dataset/images/val/f351.jpg",
+      "file_name": "f351.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 47,
-      "file_name": "dataset/images/val/f352.jpg",
+      "file_name": "f352.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 48,
-      "file_name": "dataset/images/val/f353.jpg",
+      "file_name": "f353.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 49,
-      "file_name": "dataset/images/val/f354.jpg",
+      "file_name": "f354.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 50,
-      "file_name": "dataset/images/val/f355.jpg",
+      "file_name": "f355.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 51,
-      "file_name": "dataset/images/val/f356.jpg",
+      "file_name": "f356.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 52,
-      "file_name": "dataset/images/val/f357.jpg",
+      "file_name": "f357.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 53,
-      "file_name": "dataset/images/val/f358.jpg",
+      "file_name": "f358.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 54,
-      "file_name": "dataset/images/val/f359.jpg",
+      "file_name": "f359.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 55,
-      "file_name": "dataset/images/val/f360.jpg",
+      "file_name": "f360.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 56,
-      "file_name": "dataset/images/val/f361.jpg",
+      "file_name": "f361.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 57,
-      "file_name": "dataset/images/val/f362.jpg",
+      "file_name": "f362.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 58,
-      "file_name": "dataset/images/val/f363.jpg",
+      "file_name": "f363.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 59,
-      "file_name": "dataset/images/val/f364.jpg",
+      "file_name": "f364.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 60,
-      "file_name": "dataset/images/val/f365.jpg",
+      "file_name": "f365.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 61,
-      "file_name": "dataset/images/val/f586.jpg",
+      "file_name": "f586.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 62,
-      "file_name": "dataset/images/val/f587.jpg",
+      "file_name": "f587.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 63,
-      "file_name": "dataset/images/val/f588.jpg",
+      "file_name": "f588.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 64,
-      "file_name": "dataset/images/val/f589.jpg",
+      "file_name": "f589.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 65,
-      "file_name": "dataset/images/val/f590.jpg",
+      "file_name": "f590.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 66,
-      "file_name": "dataset/images/val/f591.jpg",
+      "file_name": "f591.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 67,
-      "file_name": "dataset/images/val/f592.jpg",
+      "file_name": "f592.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 68,
-      "file_name": "dataset/images/val/f593.jpg",
+      "file_name": "f593.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 69,
-      "file_name": "dataset/images/val/f594.jpg",
+      "file_name": "f594.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 70,
-      "file_name": "dataset/images/val/f595.jpg",
+      "file_name": "f595.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 71,
-      "file_name": "dataset/images/val/f596.jpg",
+      "file_name": "f596.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 72,
-      "file_name": "dataset/images/val/f597.jpg",
+      "file_name": "f597.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 73,
-      "file_name": "dataset/images/val/f598.jpg",
+      "file_name": "f598.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 74,
-      "file_name": "dataset/images/val/f599.jpg",
+      "file_name": "f599.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 75,
-      "file_name": "dataset/images/val/f600.jpg",
+      "file_name": "f600.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 76,
-      "file_name": "dataset/images/val/f601.jpg",
+      "file_name": "f601.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 77,
-      "file_name": "dataset/images/val/f602.jpg",
+      "file_name": "f602.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 78,
-      "file_name": "dataset/images/val/f603.jpg",
+      "file_name": "f603.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 79,
-      "file_name": "dataset/images/val/f604.jpg",
+      "file_name": "f604.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 80,
-      "file_name": "dataset/images/val/f605.jpg",
+      "file_name": "f605.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 81,
-      "file_name": "dataset/images/val/f606.jpg",
+      "file_name": "f606.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 82,
-      "file_name": "dataset/images/val/f607.jpg",
+      "file_name": "f607.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 83,
-      "file_name": "dataset/images/val/f608.jpg",
+      "file_name": "f608.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 84,
-      "file_name": "dataset/images/val/f609.jpg",
+      "file_name": "f609.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 85,
-      "file_name": "dataset/images/val/f610.jpg",
+      "file_name": "f610.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 86,
-      "file_name": "dataset/images/val/f611.jpg",
+      "file_name": "f611.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 87,
-      "file_name": "dataset/images/val/f612.jpg",
+      "file_name": "f612.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 88,
-      "file_name": "dataset/images/val/f613.jpg",
+      "file_name": "f613.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 89,
-      "file_name": "dataset/images/val/f614.jpg",
+      "file_name": "f614.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 90,
-      "file_name": "dataset/images/val/f615.jpg",
+      "file_name": "f615.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 91,
-      "file_name": "dataset/images/val/f616.jpg",
+      "file_name": "f616.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 92,
-      "file_name": "dataset/images/val/f617.jpg",
+      "file_name": "f617.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 93,
-      "file_name": "dataset/images/val/f618.jpg",
+      "file_name": "f618.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 94,
-      "file_name": "dataset/images/val/f619.jpg",
+      "file_name": "f619.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 95,
-      "file_name": "dataset/images/val/f620.jpg",
+      "file_name": "f620.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 96,
-      "file_name": "dataset/images/val/f621.jpg",
+      "file_name": "f621.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 97,
-      "file_name": "dataset/images/val/f622.jpg",
+      "file_name": "f622.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 98,
-      "file_name": "dataset/images/val/f623.jpg",
+      "file_name": "f623.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 99,
-      "file_name": "dataset/images/val/f624.jpg",
+      "file_name": "f624.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 100,
-      "file_name": "dataset/images/val/f625.jpg",
+      "file_name": "f625.jpg",
       "height": 1512,
       "width": 2688
     },
     {
       "id": 101,
-      "file_name": "dataset/images/val/f80.jpg",
+      "file_name": "f80.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 102,
-      "file_name": "dataset/images/val/f81.jpg",
+      "file_name": "f81.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 103,
-      "file_name": "dataset/images/val/f82.jpg",
+      "file_name": "f82.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 104,
-      "file_name": "dataset/images/val/f83.jpg",
+      "file_name": "f83.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 105,
-      "file_name": "dataset/images/val/f84.jpg",
+      "file_name": "f84.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 106,
-      "file_name": "dataset/images/val/f85.jpg",
+      "file_name": "f85.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 107,
-      "file_name": "dataset/images/val/f86.jpg",
+      "file_name": "f86.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 108,
-      "file_name": "dataset/images/val/f87.jpg",
+      "file_name": "f87.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 109,
-      "file_name": "dataset/images/val/f88.jpg",
+      "file_name": "f88.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 110,
-      "file_name": "dataset/images/val/f89.jpg",
+      "file_name": "f89.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 111,
-      "file_name": "dataset/images/val/f90.jpg",
+      "file_name": "f90.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 112,
-      "file_name": "dataset/images/val/f91.jpg",
+      "file_name": "f91.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 113,
-      "file_name": "dataset/images/val/f92.jpg",
+      "file_name": "f92.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 114,
-      "file_name": "dataset/images/val/f93.jpg",
+      "file_name": "f93.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 115,
-      "file_name": "dataset/images/val/f94.jpg",
+      "file_name": "f94.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 116,
-      "file_name": "dataset/images/val/f95.jpg",
+      "file_name": "f95.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 117,
-      "file_name": "dataset/images/val/f96.jpg",
+      "file_name": "f96.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 118,
-      "file_name": "dataset/images/val/f97.jpg",
+      "file_name": "f97.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 119,
-      "file_name": "dataset/images/val/f98.jpg",
+      "file_name": "f98.jpg",
       "height": 3078,
       "width": 5472
     },
     {
       "id": 120,
-      "file_name": "dataset/images/val/f99.jpg",
+      "file_name": "f99.jpg",
       "height": 3078,
       "width": 5472
     }
