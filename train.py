@@ -141,12 +141,49 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
         problematic = []
         for d in dicts:
             dd = dict(d)
-            fn = dd.get("file_name", "")
-            if not os.path.isabs(fn):
-                # try to resolve relative filenames under img_root
-                candidate = os.path.join(img_root, os.path.basename(fn))
-                if os.path.isfile(candidate):
-                    dd["file_name"] = candidate
+            fn = dd.get("file_name", "") or ''
+            # Robustly resolve the image file path using several strategies.
+            resolved = None
+            try:
+                fn_norm = fn.replace('\\', '/').lstrip('./')
+                img_root_norm = (img_root.replace('\\', '/').rstrip('/')) if isinstance(img_root, str) else ''
+                candidates = []
+                # If absolute path provided, try it first
+                if os.path.isabs(fn_norm):
+                    candidates.append(fn_norm)
+                # If the fn already contains the img_root, strip duplicate prefixes
+                if img_root_norm and img_root_norm in fn_norm:
+                    tail = fn_norm.split(img_root_norm)[-1].lstrip('/')
+                    candidates.append(os.path.join(img_root_norm, tail))
+                    candidates.append(tail)
+                # Common joins
+                candidates.append(os.path.join(img_root, fn_norm))
+                candidates.append(os.path.join(img_root, os.path.basename(fn_norm)))
+                candidates.append(fn_norm)
+
+                # Try all candidates (as-is and relative to cwd) and pick the first that exists
+                for c in candidates:
+                    if not c:
+                        continue
+                    for test in (c, os.path.join(os.getcwd(), c)):
+                        try:
+                            test_norm = os.path.normpath(test)
+                        except Exception:
+                            test_norm = test
+                        if os.path.isfile(test_norm):
+                            resolved = test_norm
+                            break
+                    if resolved:
+                        break
+            except Exception:
+                resolved = None
+
+            if resolved:
+                dd["file_name"] = resolved
+            else:
+                # Could not resolve image file; skip this image and its annotations
+                problematic.append({"image_file": fn, "reason": "file_not_found"})
+                continue
             anns = []
             for ann in dd.get("annotations", []):
                 ann2 = dict(ann)

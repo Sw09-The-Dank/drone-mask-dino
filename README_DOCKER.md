@@ -27,7 +27,7 @@ Run examples
 
 ```bash
 # mount current folder and run the image (prints GPU info then runs training)
-docker run --gpus all --rm -it \
+sudo docker run --gpus all --rm -it \
   -v "$(pwd):/workspace" \
   -w /workspace \
   drone-maskdino:latest \
