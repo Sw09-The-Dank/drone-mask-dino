@@ -237,7 +237,7 @@ sudo docker run --gpus all --rm -it --network=host --ipc=host \
   -e NCCL_DEBUG=INFO -e NCCL_SOCKET_IFNAME=enp1s0f1np1 -e NCCL_IB_DISABLE=0 \
   -v "$(pwd):/workspace" -w /workspace \
   drone-maskdino:latest \
-  /bin/bash -lc "bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500 --"
+  /bin/bash -lc "bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500 -- --max-iter 3000 --ims-per-batch 32 --base-lr 0.00001 --num-workers 32 --no-resume"
 ```
 
 worker
@@ -246,5 +246,5 @@ sudo docker run --gpus all --rm -it --network=host --ipc=host \
   -e NCCL_DEBUG=INFO -e NCCL_SOCKET_IFNAME=enp1s0f0np0 -e NCCL_IB_DISABLE=0 \
   -v "$(pwd):/workspace" -w /workspace \
   drone-maskdino:latest \
-  /bin/bash -lc "bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500 --"
+  /bin/bash -lc "bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500 -- --max-iter 3000 --ims-per-batch 32 --base-lr 0.00001 --num-workers 32 --no-resume"
 ```

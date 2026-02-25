@@ -512,7 +512,19 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     except Exception:
         pass
 
-    # Apply optional config/weight overrides provided by caller (CLI or function args)
+   
+
+    # Use the sanitized (clean) dataset names for training/testing if available
+    cfg.DATASETS.TRAIN = (train_dataset_name,) if isinstance(train_dataset_name, str) else (train_name,)
+    cfg.DATASETS.TEST = (val_dataset_name,) if isinstance(val_dataset_name, str) else (val_name,)
+    cfg.DATALOADER.NUM_WORKERS = 12
+    cfg.SOLVER.IMS_PER_BATCH = 12
+    cfg.SOLVER.BASE_LR = 0.00005
+    # cfg.SOLVER.STEPS = (3000,4000)
+    cfg.SOLVER.MAX_ITER = 3000
+    cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 256
+
+     # Apply optional config/weight overrides provided by caller (CLI or function args)
     try:
         if config_file:
             try:
@@ -589,17 +601,8 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                     print(f"[WARN] Failed to apply cfg override '{opt}': {e}")
     except Exception as e:
         print(f"[WARN] Error applying config overrides: {e}")
-
-    # Use the sanitized (clean) dataset names for training/testing if available
-    cfg.DATASETS.TRAIN = (train_dataset_name,) if isinstance(train_dataset_name, str) else (train_name,)
-    cfg.DATASETS.TEST = (val_dataset_name,) if isinstance(val_dataset_name, str) else (val_name,)
-    cfg.DATALOADER.NUM_WORKERS = 12
-    cfg.SOLVER.IMS_PER_BATCH = 12
-    cfg.SOLVER.BASE_LR = 0.00005
-    # cfg.SOLVER.STEPS = (3000,4000)
-    cfg.SOLVER.MAX_ITER = 3000
-    cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 256
-
+        
+        
     # Infer number of classes from train JSON categories
     try:
         with open(train_json_path, "r", encoding="utf-8") as f:
