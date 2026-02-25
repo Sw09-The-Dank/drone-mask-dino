@@ -45,7 +45,20 @@ class CheckpointCleanupHook(HookBase):
 print("\n--- TRAINER DEFINITION ---")
 # print_cuda_mem("before TrainerWithDebug instantiation")
 
-def run_default_trainer(train_json_path="output_annotations/train_polygons.json", val_json_path="output_annotations/val_polygons.json", images_root="dataset/images"):
+def run_default_trainer(train_json_path="output_annotations/train_polygons.json",
+                        val_json_path="output_annotations/val_polygons.json",
+                        images_root="dataset/images",
+                        output_dir=None,
+                        max_iter=None,
+                        ims_per_batch=None,
+                        base_lr=None,
+                        num_workers=None,
+                        batch_size_per_image=None,
+                        num_classes=None,
+                        config_file=None,
+                        weights=None,
+                        extra_cfg=None,
+                        resume=True):
     try:
         from detectron2.data.datasets import register_coco_instances
         from detectron2.engine import DefaultTrainer
@@ -499,14 +512,92 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     except Exception:
         pass
 
+    # Apply optional config/weight overrides provided by caller (CLI or function args)
+    try:
+        if config_file:
+            try:
+                cfg.merge_from_file(config_file)
+                print(f"[INFO] Merged config file: {config_file}")
+            except Exception:
+                try:
+                    # maybe a model_zoo short path
+                    cfg.merge_from_file(model_zoo.get_config_file(config_file))
+                    print(f"[INFO] Merged model_zoo config: {config_file}")
+                except Exception:
+                    print(f"[WARN] Could not load config file: {config_file}")
+        if weights:
+            cfg.MODEL.WEIGHTS = weights
+            print(f"[INFO] Set MODEL.WEIGHTS = {weights}")
+
+        # Simple scalar overrides
+        if output_dir:
+            cfg.OUTPUT_DIR = output_dir
+            os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
+            print(f"[INFO] Set OUTPUT_DIR = {cfg.OUTPUT_DIR}")
+        if num_workers is not None:
+            cfg.DATALOADER.NUM_WORKERS = int(num_workers)
+            print(f"[INFO] Set DATALOADER.NUM_WORKERS = {cfg.DATALOADER.NUM_WORKERS}")
+        if ims_per_batch is not None:
+            cfg.SOLVER.IMS_PER_BATCH = int(ims_per_batch)
+            print(f"[INFO] Set SOLVER.IMS_PER_BATCH = {cfg.SOLVER.IMS_PER_BATCH}")
+        if base_lr is not None:
+            cfg.SOLVER.BASE_LR = float(base_lr)
+            print(f"[INFO] Set SOLVER.BASE_LR = {cfg.SOLVER.BASE_LR}")
+        if max_iter is not None:
+            cfg.SOLVER.MAX_ITER = int(max_iter)
+            print(f"[INFO] Set SOLVER.MAX_ITER = {cfg.SOLVER.MAX_ITER}")
+        if batch_size_per_image is not None:
+            cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = int(batch_size_per_image)
+            print(f"[INFO] Set MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = {cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE}")
+        if num_classes is not None:
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = int(num_classes)
+            print(f"[INFO] Set MODEL.ROI_HEADS.NUM_CLASSES = {cfg.MODEL.ROI_HEADS.NUM_CLASSES}")
+
+        # Extra dotted cfg overrides, e.g. "SOLVER.BASE_LR=0.001"
+        if extra_cfg:
+            for opt in extra_cfg:
+                try:
+                    if '=' not in opt:
+                        print(f"[WARN] Skipping invalid cfg override (no '='): {opt}")
+                        continue
+                    key, val = opt.split('=', 1)
+                    parts = key.split('.')
+                    node = cfg
+                    for p in parts[:-1]:
+                        node = getattr(node, p)
+                    attr = parts[-1]
+                    # parse value to bool/int/float when possible
+                    v_lower = val.lower()
+                    if v_lower in ('true', 'false'):
+                        parsed = v_lower == 'true'
+                    else:
+                        try:
+                            if '.' in val:
+                                parsed = float(val)
+                                if parsed.is_integer():
+                                    parsed = int(parsed)
+                            else:
+                                parsed = int(val)
+                        except Exception:
+                            try:
+                                parsed = float(val)
+                            except Exception:
+                                parsed = val
+                    setattr(node, attr, parsed)
+                    print(f"[INFO] Set cfg {key} = {parsed}")
+                except Exception as e:
+                    print(f"[WARN] Failed to apply cfg override '{opt}': {e}")
+    except Exception as e:
+        print(f"[WARN] Error applying config overrides: {e}")
+
     # Use the sanitized (clean) dataset names for training/testing if available
     cfg.DATASETS.TRAIN = (train_dataset_name,) if isinstance(train_dataset_name, str) else (train_name,)
     cfg.DATASETS.TEST = (val_dataset_name,) if isinstance(val_dataset_name, str) else (val_name,)
-    cfg.DATALOADER.NUM_WORKERS = 4
-    cfg.SOLVER.IMS_PER_BATCH = 4
-    cfg.SOLVER.BASE_LR = 0.00025
-    cfg.SOLVER.STEPS = (3000,4000)
-    cfg.SOLVER.MAX_ITER = 10000
+    cfg.DATALOADER.NUM_WORKERS = 12
+    cfg.SOLVER.IMS_PER_BATCH = 12
+    cfg.SOLVER.BASE_LR = 0.00005
+    # cfg.SOLVER.STEPS = (3000,4000)
+    cfg.SOLVER.MAX_ITER = 3000
     cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 256
 
     # Infer number of classes from train JSON categories
@@ -617,7 +708,8 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
         print("[WARN] Could not monkey-patch annotations_to_instances:", e)
 
     trainer = DefaultTrainer(cfg)
-    trainer.resume_or_load(resume=True)
+    # resume=True will continue from last checkpoint if present
+    trainer.resume_or_load(resume=bool(resume))
     trainer.train()
 
     RUN_EVALUATION = True  # Set to True to run evaluation after training
@@ -1110,4 +1202,39 @@ if __name__ == "__main__":
     # When launched under torch.distributed.run (torchrun), each process
     # will execute this file. Guard the top-level call so importing the
     # module doesn't start training unintentionally.
-    run_default_trainer()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run default trainer with optional cfg overrides")
+    parser.add_argument('--train-json', default="output_annotations/train_polygons.json", help='path to train COCO JSON')
+    parser.add_argument('--val-json', default="output_annotations/val_polygons.json", help='path to val COCO JSON')
+    parser.add_argument('--images-root', default="dataset/images", help='root folder for images')
+    parser.add_argument('--output-dir', default=None, help='output directory to write trainer outputs')
+    parser.add_argument('--max-iter', type=int, default=None, help='override SOLVER.MAX_ITER')
+    parser.add_argument('--ims-per-batch', type=int, default=None, help='override SOLVER.IMS_PER_BATCH')
+    parser.add_argument('--base-lr', type=float, default=None, help='override SOLVER.BASE_LR')
+    parser.add_argument('--num-workers', type=int, default=None, help='override DATALOADER.NUM_WORKERS')
+    parser.add_argument('--batch-size-per-image', type=int, default=None, help='override MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE')
+    parser.add_argument('--num-classes', type=int, default=None, help='override MODEL.ROI_HEADS.NUM_CLASSES')
+    parser.add_argument('--config-file', default=None, help='path to a detectron2 config file (or model_zoo key)')
+    parser.add_argument('--weights', default=None, help='path or url to weights to set cfg.MODEL.WEIGHTS')
+    parser.add_argument('-s', '--set', action='append', dest='set', help='extra cfg override in form KEY=VALUE (dotted path, can be repeated)')
+    parser.add_argument('--no-resume', dest='resume', action='store_false', help='start training from scratch (do not resume from last checkpoint)')
+
+    args = parser.parse_args()
+
+    run_default_trainer(
+        train_json_path=args.train_json,
+        val_json_path=args.val_json,
+        images_root=args.images_root,
+        output_dir=args.output_dir,
+        max_iter=args.max_iter,
+        ims_per_batch=args.ims_per_batch,
+        base_lr=args.base_lr,
+        num_workers=args.num_workers,
+        batch_size_per_image=args.batch_size_per_image,
+        num_classes=args.num_classes,
+        config_file=args.config_file,
+        weights=args.weights,
+        extra_cfg=args.set,
+        resume=args.resume,
+    )
