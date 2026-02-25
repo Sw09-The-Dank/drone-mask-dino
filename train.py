@@ -15,6 +15,44 @@ print("PyTorch version:", torch.__version__)
 print("CUDA available:", torch.cuda.is_available())
 print("CUDA version:", torch.version.cuda)
 
+# DDP / device setup: prefer LOCAL_RANK mapping used by torch.distributed.run
+try:
+    import time
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    rank_env = os.environ.get('RANK')
+    world_env = os.environ.get('WORLD_SIZE')
+    # set CUDA device if available
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.set_device(local_rank)
+        except Exception:
+            pass
+    # enable cudnn autotuner for potentially faster kernels
+    try:
+        torch.backends.cudnn.benchmark = True
+    except Exception:
+        pass
+    # set sensible CPU thread defaults if not provided
+    try:
+        os.environ.setdefault('OMP_NUM_THREADS', '8')
+        os.environ.setdefault('MKL_NUM_THREADS', '8')
+        torch.set_num_threads(int(os.environ.get('OMP_NUM_THREADS', '8')))
+    except Exception:
+        pass
+
+    print(f"DDP START host={socket.gethostname()} RANK={rank_env} LOCAL_RANK={local_rank} WORLD_SIZE={world_env}")
+    # write a small heartbeat file visible on the shared workspace to help debugging
+    try:
+        hb_dir = os.path.join(os.getcwd(), 'output_maskdino')
+        os.makedirs(hb_dir, exist_ok=True)
+        hb_path = os.path.join(hb_dir, f"ddp_heartbeat_rank_{rank_env or local_rank}.txt")
+        with open(hb_path, 'a') as hf:
+            hf.write(f"start {time.time()} host={socket.gethostname()}\n")
+    except Exception:
+        pass
+except Exception:
+    pass
+
 
 # -----------------------------
 # DATASET REGISTRATION (register only the split needed at each phase)
