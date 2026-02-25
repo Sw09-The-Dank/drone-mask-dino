@@ -87,6 +87,13 @@ python train.py --output-dir output_maskdino/trainer_output_custom
 python train.py --no-resume
 ```
 
+- Specify training by epochs (converts to iterations automatically):
+
+```bash
+python train.py --epochs 10 --ims-per-batch 32
+```
+
 Notes:
 - The `-s/--set` overrides accept booleans (`true`/`false`), integers and floats when parseable; otherwise the raw string is used.
+- The `--epochs` option computes `SOLVER.MAX_ITER = epochs * ceil(num_images / IMS_PER_BATCH)` using your registered train dataset (or the train JSON). If `--epochs` is provided it overrides `--max-iter`.
 - Run `python train.py --help` to see all available options.

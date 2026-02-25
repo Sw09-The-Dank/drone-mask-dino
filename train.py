@@ -58,7 +58,8 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                         config_file=None,
                         weights=None,
                         extra_cfg=None,
-                        resume=True):
+                        resume=True,
+                        epochs=None):
     try:
         from detectron2.data.datasets import register_coco_instances
         from detectron2.engine import DefaultTrainer
@@ -618,6 +619,34 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
         cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
         print("Could not read train JSON to infer NUM_CLASSES; defaulting to 1")
 
+    # If epochs provided, compute SOLVER.MAX_ITER from dataset size and ims_per_batch
+    try:
+        if epochs is not None:
+            try:
+                from detectron2.data import DatasetCatalog
+                ds = list(DatasetCatalog.get(train_dataset_name))
+                num_images = len(ds)
+            except Exception:
+                # fallback to reading COCO JSON if registered dataset not available
+                try:
+                    with open(train_json_path, 'r', encoding='utf-8') as _jf:
+                        jjj = json.load(_jf)
+                        num_images = len(jjj.get('images', []))
+                except Exception:
+                    num_images = None
+
+            if num_images and num_images > 0:
+                imgs_per_iter = getattr(cfg.SOLVER, 'IMS_PER_BATCH', 1) or 1
+                try:
+                    iters_per_epoch = int(math.ceil(float(num_images) / float(imgs_per_iter)))
+                except Exception:
+                    iters_per_epoch = int(max(1, num_images))
+                cfg.SOLVER.MAX_ITER = int(iters_per_epoch * int(epochs))
+                print(f"[INFO] Set SOLVER.MAX_ITER={cfg.SOLVER.MAX_ITER} from epochs={epochs} (images={num_images}, ims_per_batch={imgs_per_iter}, iters_per_epoch={iters_per_epoch})")
+            else:
+                print("[WARN] Could not determine number of training images; skipping epochs->MAX_ITER conversion")
+    except Exception as e:
+        print(f"[WARN] Failed to compute MAX_ITER from epochs: {e}")
     cfg.OUTPUT_DIR = "output_maskdino/trainer_output"
     os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
 
@@ -1222,6 +1251,7 @@ if __name__ == "__main__":
     parser.add_argument('--weights', default=None, help='path or url to weights to set cfg.MODEL.WEIGHTS')
     parser.add_argument('-s', '--set', action='append', dest='set', help='extra cfg override in form KEY=VALUE (dotted path, can be repeated)')
     parser.add_argument('--no-resume', dest='resume', action='store_false', help='start training from scratch (do not resume from last checkpoint)')
+    parser.add_argument('--epochs', type=int, default=None, help='number of epochs to train; if set, overrides --max-iter by computing iterations = epochs * ceil(num_images / IMS_PER_BATCH)')
 
     args = parser.parse_args()
 
@@ -1240,4 +1270,5 @@ if __name__ == "__main__":
         weights=args.weights,
         extra_cfg=args.set,
         resume=args.resume,
+        epochs=args.epochs,
     )
