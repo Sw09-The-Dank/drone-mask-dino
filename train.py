@@ -17,7 +17,7 @@ print("CUDA version:", torch.version.cuda)
 
 # DDP / device setup: prefer LOCAL_RANK mapping used by torch.distributed.run
 try:
-    import time
+    import time, socket
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     rank_env = os.environ.get('RANK')
     world_env = os.environ.get('WORLD_SIZE')
@@ -34,22 +34,30 @@ try:
         pass
     # set sensible CPU thread defaults if not provided
     try:
-        os.environ.setdefault('OMP_NUM_THREADS', '8')
-        os.environ.setdefault('MKL_NUM_THREADS', '8')
-        torch.set_num_threads(int(os.environ.get('OMP_NUM_THREADS', '8')))
+        os.environ.setdefault('OMP_NUM_THREADS', '4')
+        os.environ.setdefault('MKL_NUM_THREADS', '4')
+        torch.set_num_threads(int(os.environ.get('OMP_NUM_THREADS', '4')))
     except Exception:
         pass
 
     print(f"DDP START host={socket.gethostname()} RANK={rank_env} LOCAL_RANK={local_rank} WORLD_SIZE={world_env}")
-    # write a small heartbeat file visible on the shared workspace to help debugging
+    # write a small heartbeat file to /workspace so it's visible on host via the bind-mount
     try:
-        hb_dir = os.path.join(os.getcwd(), 'output_maskdino')
-        os.makedirs(hb_dir, exist_ok=True)
-        hb_path = os.path.join(hb_dir, f"ddp_heartbeat_rank_{rank_env or local_rank}.txt")
-        with open(hb_path, 'a') as hf:
-            hf.write(f"start {time.time()} host={socket.gethostname()}\n")
-    except Exception:
-        pass
+        hb_dir = '/workspace'
+        if not os.path.isdir(hb_dir):
+            # fallback to current working dir
+            hb_dir = os.getcwd()
+        hb_name = f"ddp_heartbeat_rank_{rank_env if rank_env is not None else local_rank}.txt"
+        hb_path = os.path.join(hb_dir, hb_name)
+        # ensure parent exists
+        try:
+            open(hb_path, 'a').close()
+            with open(hb_path, 'a') as hf:
+                hf.write(f"start {time.time()} host={socket.gethostname()} cwd={os.getcwd()}\n")
+        except Exception as e:
+            print(f"[WARN] Could not write heartbeat file {hb_path}: {e}")
+    except Exception as e:
+        print(f"[WARN] Heartbeat setup failed: {e}")
 except Exception:
     pass
 
