@@ -59,6 +59,47 @@ def setup_ddp_from_env():
     except Exception:
         pass
 
+
+def finalize_ddp(wait_seconds: float = 1.0):
+    """Attempt a graceful distributed shutdown.
+
+    - Synchronize CUDA on each device to flush kernels.
+    - Run a barrier so all ranks reach this point.
+    - Sleep briefly to allow outstanding async NCCL ops to complete on the remote side.
+    - Run a second barrier and then destroy the process group.
+    This helps avoid "remote process exited" NCCL errors when one rank exits earlier than others.
+    """
+    try:
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            try:
+                torch.distributed.barrier()
+            except Exception:
+                pass
+            try:
+                # give a small grace period for async ops to finish on remote ranks
+                time.sleep(float(wait_seconds))
+            except Exception:
+                pass
+            try:
+                torch.distributed.barrier()
+            except Exception:
+                pass
+            try:
+                torch.distributed.destroy_process_group()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     # init process group if needed
     try:
         if torch.distributed.is_available() and not torch.distributed.is_initialized() and world_size > 1:
@@ -1145,17 +1186,9 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
         except Exception:
             pass
 
-    # finalize distributed group if initialized
+    # finalize distributed group if initialized (graceful shutdown)
     try:
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            try:
-                torch.distributed.barrier()
-            except Exception:
-                pass
-            try:
-                torch.distributed.destroy_process_group()
-            except Exception:
-                pass
+        finalize_ddp(wait_seconds=1.0)
     except Exception:
         pass
 
