@@ -270,6 +270,32 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
         print("[ERROR] detectron2 is required to run the trainer:", e)
         return
 
+    # Ensure DDP/init and detectron2 local PG exist before constructing DefaultTrainer
+    try:
+        try:
+            setup_ddp_from_env()
+        except Exception:
+            pass
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            try:
+                from detectron2.utils import comm as d2comm
+                # Prefer explicit env var from launcher; fallbacks to 1
+                try:
+                    n_local = int(os.environ.get('LOCAL_WORLD_SIZE', os.environ.get('LOCAL_SIZE', os.environ.get('NPROC_PER_NODE', '1'))))
+                except Exception:
+                    n_local = 1
+                if n_local < 1:
+                    n_local = 1
+                try:
+                    d2comm.create_local_process_group(n_local)
+                except Exception as e:
+                    # It's okay if already created or fails; warn for visibility
+                    print(f"[WARN] create_local_process_group failed: {e}")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     # Auto-detect images_root if not provided and common path exists
     if not images_root:
         candidate = os.path.join("dataset", "images")
