@@ -35,6 +35,18 @@ export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-eth0}
 export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-0}
 export NCCL_P2P_LEVEL=SYS
 
+# Auto-detect network interface used to reach MASTER_ADDR when the user left the
+# default interface (eth0) or did not set NCCL_SOCKET_IFNAME. This helps common
+# multi-host setups where the interface name differs between machines.
+if [ "${NCCL_SOCKET_IFNAME:-}" = "eth0" ] || [ -z "${NCCL_SOCKET_IFNAME:-}" ]; then
+  if command -v ip >/dev/null 2>&1; then
+    DET_IF=$(ip route get ${MASTER_ADDR} 2>/dev/null | awk '/dev/ {for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -n1)
+    if [ -n "${DET_IF}" ]; then
+      export NCCL_SOCKET_IFNAME=${DET_IF}
+    fi
+  fi
+fi
+
 echo "Launching DDP: nnodes=${NNODES}, nproc_per_node=${NPROC_PER_NODE}, node_rank=${NODE_RANK}, master_addr=${MASTER_ADDR}, master_port=${MASTER_PORT}"
 echo "NCCL_DEBUG=${NCCL_DEBUG}, NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}, NCCL_IB_DISABLE=${NCCL_IB_DISABLE}"
 

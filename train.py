@@ -788,6 +788,36 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     trainer = DefaultTrainer(cfg)
     # resume=True will continue from last checkpoint if present
     trainer.resume_or_load(resume=bool(resume))
+    # --- DDP & data-loader sanity checks (help debug multi-node behavior) ---
+    try:
+        print("[DEBUG] torch.distributed available:", torch.distributed.is_available())
+        print("[DEBUG] torch.distributed initialized:", torch.distributed.is_initialized())
+        print(f"[DEBUG] Env RANK={os.environ.get('RANK')} LOCAL_RANK={os.environ.get('LOCAL_RANK')} WORLD_SIZE={os.environ.get('WORLD_SIZE')}")
+    except Exception:
+        print("[DEBUG] Could not query torch.distributed state")
+
+    # Inspect trainer.model for DDP wrapping
+    try:
+        is_ddp = isinstance(getattr(trainer, 'model', None), torch.nn.parallel.DistributedDataParallel)
+        print(f"[DEBUG] trainer.model is DistributedDataParallel: {is_ddp}")
+    except Exception:
+        print("[DEBUG] Could not inspect trainer.model for DDP wrapper")
+
+    # Build a temporary train loader to inspect its sampler (non-destructive)
+    try:
+        from detectron2.data import build_detection_train_loader
+        tmp_loader = build_detection_train_loader(cfg)
+        sampler = getattr(tmp_loader, 'sampler', None)
+        print(f"[DEBUG] Train loader sampler: {type(sampler).__name__ if sampler is not None else 'None'}")
+        try:
+            from torch.utils.data.distributed import DistributedSampler as _DS
+            is_dist_sampler = isinstance(sampler, _DS)
+            print(f"[DEBUG] Train loader uses DistributedSampler: {is_dist_sampler}")
+        except Exception:
+            print("[DEBUG] Could not determine if sampler is DistributedSampler")
+    except Exception as e:
+        print(f"[WARN] Could not build/inspect train loader: {e}")
+
     trainer.train()
 
     RUN_EVALUATION = True  # Set to True to run evaluation after training
