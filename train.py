@@ -88,6 +88,27 @@ def setup_ddp_from_env():
                 print(f"[WARN] torch.distributed.init_process_group failed: {e}")
     except Exception as e:
         print(f"[WARN] DDP setup problem: {e}")
+    # If the process group was initialized elsewhere (earlier), still ensure detectron2 local PG exists
+    try:
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            try:
+                from detectron2.utils import comm as d2comm
+                # determine local workers per machine; prefer env vars, fallback to 1
+                try:
+                    local_world_size = int(os.environ.get('LOCAL_WORLD_SIZE', os.environ.get('LOCAL_SIZE', '1')))
+                except Exception:
+                    local_world_size = 1
+                if local_world_size < 1:
+                    local_world_size = 1
+                try:
+                    d2comm.create_local_process_group(local_world_size)
+                except Exception:
+                    # may have been created already; ignore
+                    pass
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 
