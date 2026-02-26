@@ -6,14 +6,73 @@ import numpy as np
 import torch
 from detectron2.engine import HookBase
 
+# standard utilities used across this script
+import os
+import sys
+import time
+import socket
+import glob
+import json
+import math
+import random
+import datetime
+import inspect
+import argparse
+
+import numpy as np
+
+# torch is used throughout; ensure it's available and provide DDP helpers
+import torch
+
 
 # -----------------------------
 # SANITY CHECK: CUDA
 # -----------------------------
 
-print("PyTorch version:", torch.__version__)
+print("PyTorch version:", getattr(torch, '__version__', 'n/a'))
 print("CUDA available:", torch.cuda.is_available())
-print("CUDA version:", torch.version.cuda)
+print("CUDA version:", getattr(torch.version, 'cuda', 'n/a'))
+
+
+def setup_ddp_from_env():
+    """Initialize torch.distributed if environment variables indicate multi-process run.
+
+    Respects environment variables: WORLD_SIZE, RANK, LOCAL_RANK and will set CUDA device
+    accordingly. Safe to call multiple times.
+    """
+    try:
+        local_rank = int(os.environ.get('LOCAL_RANK', os.environ.get('LOCAL_RANK', 0)))
+    except Exception:
+        local_rank = 0
+    try:
+        world_size = int(os.environ.get('WORLD_SIZE', '1'))
+    except Exception:
+        world_size = 1
+
+    # set device for this process if GPUs available
+    try:
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.set_device(local_rank)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # init process group if needed
+    try:
+        if torch.distributed.is_available() and not torch.distributed.is_initialized() and world_size > 1:
+            backend = 'nccl' if torch.cuda.is_available() else 'gloo'
+            try:
+                torch.distributed.init_process_group(backend=backend, init_method='env://')
+                rank = os.environ.get('RANK', os.environ.get('LOCAL_RANK', '0'))
+                print(f"DDP INIT: backend={backend} RANK={rank} LOCAL_RANK={local_rank} WORLD_SIZE={world_size}")
+            except Exception as e:
+                print(f"[WARN] torch.distributed.init_process_group failed: {e}")
+    except Exception as e:
+        print(f"[WARN] DDP setup problem: {e}")
+
+
 
 # DDP / device setup: prefer LOCAL_RANK mapping used by torch.distributed.run
 try:
@@ -27,6 +86,23 @@ try:
             torch.cuda.set_device(local_rank)
         except Exception:
             pass
+    # Initialize process group for distributed training when appropriate.
+    try:
+        if torch.distributed.is_available() and not torch.distributed.is_initialized():
+            # Only init when we have a WORLD_SIZE > 1 (torchrun sets WORLD_SIZE)
+            try:
+                ws = int(os.environ.get('WORLD_SIZE', '1'))
+            except Exception:
+                ws = 1
+            if ws > 1:
+                backend = 'nccl' if torch.cuda.is_available() else 'gloo'
+                try:
+                    torch.distributed.init_process_group(backend=backend, init_method='env://')
+                    print(f"DDP INIT: backend={backend} RANK={os.environ.get('RANK')} LOCAL_RANK={local_rank} WORLD_SIZE={os.environ.get('WORLD_SIZE')}")
+                except Exception as e:
+                    print(f"[WARN] torch.distributed.init_process_group failed: {e}")
+    except Exception:
+        pass
     # enable cudnn autotuner for potentially faster kernels
     try:
         torch.backends.cudnn.benchmark = True
@@ -818,12 +894,33 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     except Exception as e:
         print(f"[WARN] Could not build/inspect train loader: {e}")
 
+    # synchronize all processes before starting training (if DDP active)
+    try:
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.barrier()
+    except Exception:
+        pass
+
     trainer.train()
 
+    # ensure all processes reach this point before evaluation/plotting
+    try:
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.barrier()
+    except Exception:
+        pass
+
+    # determine rank/main process for multi-process setups; only rank 0 should do IO-heavy tasks
+    is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
+    try:
+        rank = torch.distributed.get_rank() if is_distributed else 0
+    except Exception:
+        rank = 0
+    is_main = (rank == 0)
+
     RUN_EVALUATION = True  # Set to True to run evaluation after training
-        # Run evaluation on the validation set using COCOEvaluator if available
-        
-    if RUN_EVALUATION:
+    # Run evaluation on the validation set using COCOEvaluator if available (only on main)
+    if RUN_EVALUATION and is_main:
         try:
             from detectron2.evaluation import COCOEvaluator, inference_on_dataset
             from detectron2.data import build_detection_test_loader
@@ -831,13 +928,10 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
             val_loader = build_detection_test_loader(cfg, val_dataset_name)
             results = inference_on_dataset(trainer.model, val_loader, evaluator)
             print(f"[INFO] Evaluation results: {results}")
-           
         except Exception as e:
             print("[WARN] Evaluation step failed or unavailable:", e)
-            
-        
-        
-        # After training, prefer to use the trainer-produced weights for any predictor/visualization.
+
+    # After training, prefer to use the trainer-produced weights for any predictor/visualization.
     try:
         import glob
         ckpt = None
@@ -868,136 +962,164 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
             print("[WARN] No trainer checkpoint found; predictor will use cfg.MODEL.WEIGHTS (may be pretrained checkpoint)")
     except Exception as e:
         print("[WARN] Failed to locate trainer checkpoint:", e)
-    # After training, plot training metrics (if available) to visualize losses / lr over iterations
-    try:
-        import glob as _glob
-        metrics_paths = []
-        # common location: cfg.OUTPUT_DIR/metrics.json
-        mpath = os.path.join(cfg.OUTPUT_DIR, 'metrics.json')
-        if os.path.isfile(mpath):
-            metrics_paths.append(mpath)
-        # also search for metrics.json under output dir
-        metrics_paths.extend([p for p in _glob.glob(os.path.join(cfg.OUTPUT_DIR, '**', 'metrics.json'), recursive=True) if os.path.isfile(p) and p not in metrics_paths])
-        if not metrics_paths:
-            # try parent folder
-            parent = os.path.dirname(cfg.OUTPUT_DIR)
-            metrics_paths.extend([p for p in _glob.glob(os.path.join(parent, '**', 'metrics.json'), recursive=True) if os.path.isfile(p)])
-        if metrics_paths:
-            mp = metrics_paths[0]
+    # Only the main rank should perform plotting / prediction / heavy IO
+    if is_main:
+        try:
+            import glob as _glob
+            metrics_paths = []
+            # common location: cfg.OUTPUT_DIR/metrics.json
+            mpath = os.path.join(cfg.OUTPUT_DIR, 'metrics.json')
+            if os.path.isfile(mpath):
+                metrics_paths.append(mpath)
+            # also search for metrics.json under output dir
             try:
-                import json as _json
-                iters = []
-                total_loss = []
-                loss_cls = []
-                loss_box = []
-                loss_mask = []
-                lrs = []
-                times = []
-                # mask_rcnn metrics to collect if present
-                mask_acc = []
-                mask_fn = []
-                mask_fp = []
-                with open(mp, 'r', encoding='utf-8') as mf:
-                    for line in mf:
-                        line = line.strip()
-                        if not line:
-                            continue
+                metrics_paths.extend([p for p in _glob.glob(os.path.join(cfg.OUTPUT_DIR, '**', 'metrics.json'), recursive=True) if os.path.isfile(p) and p not in metrics_paths])
+            except Exception:
+                pass
+            if not metrics_paths:
+                # try parent folder
+                parent = os.path.dirname(cfg.OUTPUT_DIR)
+                try:
+                    metrics_paths.extend([p for p in _glob.glob(os.path.join(parent, '**', 'metrics.json'), recursive=True) if os.path.isfile(p)])
+                except Exception:
+                    pass
+            if metrics_paths:
+                mp = metrics_paths[0]
+                try:
+                    import json as _json
+                    iters = []
+                    total_loss = []
+                    loss_cls = []
+                    loss_box = []
+                    loss_mask = []
+                    lrs = []
+                    times = []
+                    # mask_rcnn metrics to collect if present
+                    mask_acc = []
+                    mask_fn = []
+                    mask_fp = []
+                    with open(mp, 'r', encoding='utf-8') as mf:
+                        for line in mf:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                entry = _json.loads(line)
+                            except Exception:
+                                continue
+                            if 'iteration' in entry:
+                                iters.append(int(entry.get('iteration', len(iters))))
+                                total_loss.append(float(entry.get('total_loss', float('nan'))))
+                                loss_cls.append(float(entry.get('loss_cls', float('nan'))))
+                                loss_box.append(float(entry.get('loss_box_reg', float('nan'))))
+                                loss_mask.append(float(entry.get('loss_mask', float('nan'))))
+                                lrs.append(float(entry.get('lr', float('nan'))))
+                                times.append(float(entry.get('time', float('nan'))))
+                                # collect mask_rcnn metrics when present
+                                mask_acc.append(float(entry.get('mask_rcnn/accuracy', float('nan'))))
+                                mask_fn.append(float(entry.get('mask_rcnn/false_negative', float('nan'))))
+                                mask_fp.append(float(entry.get('mask_rcnn/false_positive', float('nan'))))
+                    if iters:
                         try:
-                            entry = _json.loads(line)
-                        except Exception:
-                            continue
-                        if 'iteration' in entry:
-                            iters.append(int(entry.get('iteration', len(iters))))
-                            total_loss.append(float(entry.get('total_loss', float('nan'))))
-                            loss_cls.append(float(entry.get('loss_cls', float('nan'))))
-                            loss_box.append(float(entry.get('loss_box_reg', float('nan'))))
-                            loss_mask.append(float(entry.get('loss_mask', float('nan'))))
-                            lrs.append(float(entry.get('lr', float('nan'))))
-                            times.append(float(entry.get('time', float('nan'))))
-                            # collect mask_rcnn metrics when present
-                            mask_acc.append(float(entry.get('mask_rcnn/accuracy', float('nan'))))
-                            mask_fn.append(float(entry.get('mask_rcnn/false_negative', float('nan'))))
-                            mask_fp.append(float(entry.get('mask_rcnn/false_positive', float('nan'))))
-                if iters:
-                    try:
-                        import matplotlib.pyplot as _plt
-                        import numpy as _np
-                        fig, ax = _plt.subplots(figsize=(10, 6))
-                        ax.plot(iters, total_loss, label='total_loss')
-                        ax.plot(iters, loss_cls, label='loss_cls')
-                        ax.plot(iters, loss_box, label='loss_box_reg')
-                        ax.plot(iters, loss_mask, label='loss_mask')
-                        ax.set_xlabel('iteration')
-                        ax.set_ylabel('loss')
-                        ax.legend(loc='upper right')
-                        ax2 = ax.twinx()
-                        ax2.plot(iters, lrs, color='tab:orange', linestyle='--', label='lr')
-                        ax2.set_ylabel('lr')
-                        ax2.legend(loc='upper left')
-                        # Plot mask_rcnn metrics (accuracy / false_negative / false_positive) if available
-                        try:
-                            any_mask = any(not (_np.isnan(x)) for x in mask_acc + mask_fn + mask_fp)
-                        except Exception:
-                            any_mask = False
-                        if any_mask:
-                            fig2, axm = _plt.subplots(figsize=(10, 5))
-                            plotted = False
+                            import matplotlib.pyplot as _plt
+                            import numpy as _np
+                            fig, ax = _plt.subplots(figsize=(10, 6))
+                            ax.plot(iters, total_loss, label='total_loss')
+                            ax.plot(iters, loss_cls, label='loss_cls')
+                            ax.plot(iters, loss_box, label='loss_box_reg')
+                            ax.plot(iters, loss_mask, label='loss_mask')
+                            ax.set_xlabel('iteration')
+                            ax.set_ylabel('loss')
+                            ax.legend(loc='upper right')
+                            ax2 = ax.twinx()
+                            ax2.plot(iters, lrs, color='tab:orange', linestyle='--', label='lr')
+                            ax2.set_ylabel('lr')
+                            ax2.legend(loc='upper left')
+                            # Plot mask_rcnn metrics (accuracy / false_negative / false_positive) if available
                             try:
-                                axm.plot(iters, mask_acc, label='mask_rcnn/accuracy')
-                                plotted = True
+                                any_mask = any(not (_np.isnan(x)) for x in mask_acc + mask_fn + mask_fp)
                             except Exception:
-                                pass
-                            try:
-                                axm.plot(iters, mask_fp, linestyle='--', label='mask_rcnn/false_positive')
-                                plotted = True
-                            except Exception:
-                                pass
-                            try:
-                                axm.plot(iters, mask_fn, linestyle=':', label='mask_rcnn/false_negative')
-                                plotted = True
-                            except Exception:
-                                pass
-                            if plotted:
-                                axm.set_title('Mask R-CNN: accuracy / false positive / false negative')
-                                axm.set_xlabel('iteration')
-                                axm.set_ylabel('metric')
-                                axm.legend(loc='best')
-                                acc_out = os.path.join(cfg.OUTPUT_DIR, 'metrics_mask_rcnn.png')
-                                fig2.tight_layout()
-                                fig2.savefig(acc_out, dpi=150)
-                                _plt.close(fig2)
-                                print(f"Saved mask_rcnn metrics plot to {acc_out}")
+                                any_mask = False
+                            if any_mask:
+                                fig2, axm = _plt.subplots(figsize=(10, 5))
+                                plotted = False
+                                try:
+                                    axm.plot(iters, mask_acc, label='mask_rcnn/accuracy')
+                                    plotted = True
+                                except Exception:
+                                    pass
+                                try:
+                                    axm.plot(iters, mask_fp, linestyle='--', label='mask_rcnn/false_positive')
+                                    plotted = True
+                                except Exception:
+                                    pass
+                                try:
+                                    axm.plot(iters, mask_fn, linestyle=':', label='mask_rcnn/false_negative')
+                                    plotted = True
+                                except Exception:
+                                    pass
+                                if plotted:
+                                    axm.set_title('Mask R-CNN: accuracy / false positive / false negative')
+                                    axm.set_xlabel('iteration')
+                                    axm.set_ylabel('metric')
+                                    axm.legend(loc='best')
+                                    acc_out = os.path.join(cfg.OUTPUT_DIR, 'metrics_mask_rcnn.png')
+                                    fig2.tight_layout()
+                                    fig2.savefig(acc_out, dpi=150)
+                                    _plt.close(fig2)
+                                    print(f"Saved mask_rcnn metrics plot to {acc_out}")
 
-                        _plt.tight_layout()
-                        metrics_png = os.path.join(cfg.OUTPUT_DIR, 'metrics_over_time.png')
-                        fig.savefig(metrics_png, dpi=150)
-                        _plt.close(fig)
-                        # also write a CSV of selected metrics
-                        csv_out = os.path.join(cfg.OUTPUT_DIR, 'metrics_over_time.csv')
-                        try:
-                            import csv as _csv
-                            headers = ['iteration','total_loss','loss_cls','loss_box_reg','loss_mask','lr','time','mask_rcnn/accuracy','mask_rcnn/false_negative','mask_rcnn/false_positive']
-                            with open(csv_out, 'w', newline='', encoding='utf-8') as cf:
-                                w = _csv.writer(cf)
-                                w.writerow(headers)
-                                for i in range(len(iters)):
-                                    row = [iters[i], total_loss[i], loss_cls[i], loss_box[i], loss_mask[i], lrs[i], times[i], mask_acc[i], mask_fn[i], mask_fp[i]]
-                                    w.writerow(row)
-                            print(f"Wrote metrics plot to {metrics_png} and CSV to {csv_out}")
+                            _plt.tight_layout()
+                            metrics_png = os.path.join(cfg.OUTPUT_DIR, 'metrics_over_time.png')
+                            fig.savefig(metrics_png, dpi=150)
+                            _plt.close(fig)
+                            # also write a CSV of selected metrics
+                            csv_out = os.path.join(cfg.OUTPUT_DIR, 'metrics_over_time.csv')
+                            try:
+                                import csv as _csv
+                                headers = ['iteration','total_loss','loss_cls','loss_box_reg','loss_mask','lr','time','mask_rcnn/accuracy','mask_rcnn/false_negative','mask_rcnn/false_positive']
+                                with open(csv_out, 'w', newline='', encoding='utf-8') as cf:
+                                    w = _csv.writer(cf)
+                                    w.writerow(headers)
+                                    for i in range(len(iters)):
+                                        row = [iters[i], total_loss[i], loss_cls[i], loss_box[i], loss_mask[i], lrs[i], times[i], mask_acc[i], mask_fn[i], mask_fp[i]]
+                                        w.writerow(row)
+                                print(f"Wrote metrics plot to {metrics_png} and CSV to {csv_out}")
+                            except Exception as e:
+                                print('[WARN] Could not write metrics CSV:', e)
                         except Exception as e:
-                            print('[WARN] Could not write metrics CSV:', e)
-                    except Exception as e:
-                        print('[WARN] Could not plot metrics:', e)
-            except Exception as e:
-                print('[WARN] Failed to parse metrics file:', e)
-        else:
-            print('[INFO] No metrics.json found; skipping metrics plot')
-    except Exception as e:
-        print('[WARN] Metrics plotting failed:', e)
+                            print('[WARN] Could not plot metrics:', e)
+                except Exception as e:
+                    print('[WARN] Failed to parse metrics file:', e)
+            else:
+                print('[INFO] No metrics.json found; skipping metrics plot')
+        except Exception as e:
+            print('[WARN] Metrics plotting failed:', e)
 
-    print("\n--- TRAINING COMPLETE ---\n")
-    print("Predicting validation grids...")
-    predict_multiple_grids(cfg, val_dataset_name, grid_count=1, per_grid=6, out_prefix="val_grid", score_thresh=0.6, visualizer_scale=1.0, visualizer_min_distance=30, visualizer_y_offset=10)
+        print("\n--- TRAINING COMPLETE ---\n")
+        print("Predicting validation grids...")
+        predict_multiple_grids(cfg, val_dataset_name, grid_count=1, per_grid=6, out_prefix="val_grid", score_thresh=0.6, visualizer_scale=1.0, visualizer_min_distance=30, visualizer_y_offset=10)
+    else:
+        # non-main ranks wait until main finishes IO to ensure files are written
+        try:
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                torch.distributed.barrier()
+        except Exception:
+            pass
+
+    # finalize distributed group if initialized
+    try:
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            try:
+                torch.distributed.barrier()
+            except Exception:
+                pass
+            try:
+                torch.distributed.destroy_process_group()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 
@@ -1330,6 +1452,12 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=None, help='number of epochs to train; if set, overrides --max-iter by computing iterations = epochs * ceil(num_images / IMS_PER_BATCH)')
 
     args = parser.parse_args()
+
+    # initialize DDP if environment indicates a multi-process run
+    try:
+        setup_ddp_from_env()
+    except Exception:
+        pass
 
     run_default_trainer(
         train_json_path=args.train_json,
