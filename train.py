@@ -67,6 +67,23 @@ def setup_ddp_from_env():
                 torch.distributed.init_process_group(backend=backend, init_method='env://')
                 rank = os.environ.get('RANK', os.environ.get('LOCAL_RANK', '0'))
                 print(f"DDP INIT: backend={backend} RANK={rank} LOCAL_RANK={local_rank} WORLD_SIZE={world_size}")
+                # create detectron2 local process group so utilities like get_local_rank() work
+                try:
+                    try:
+                        local_world_size = int(os.environ.get('LOCAL_WORLD_SIZE', os.environ.get('LOCAL_SIZE', '1')))
+                    except Exception:
+                        local_world_size = 1
+                    if local_world_size < 1:
+                        local_world_size = 1
+                    # import lazily to avoid hard dependency if detectron2 isn't used
+                    try:
+                        from detectron2.utils import comm as d2comm
+                        d2comm.create_local_process_group(local_world_size)
+                        print(f"Created detectron2 local process group with {local_world_size} local workers")
+                    except Exception as e:
+                        print(f"[WARN] Could not create detectron2 local process group: {e}")
+                except Exception:
+                    pass
             except Exception as e:
                 print(f"[WARN] torch.distributed.init_process_group failed: {e}")
     except Exception as e:
