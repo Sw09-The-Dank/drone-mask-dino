@@ -35,21 +35,21 @@ print("CUDA version:", getattr(torch.version, 'cuda', 'n/a'))
 
 
 def setup_ddp_from_env():
-    """Initialize torch.distributed if environment variables indicate multi-process run.
+    """Initialize torch.distributed and detectron2 local PG from environment.
 
-    Respects environment variables: WORLD_SIZE, RANK, LOCAL_RANK and will set CUDA device
-    accordingly. Safe to call multiple times.
+    Safe to call multiple times. Reads `WORLD_SIZE`, `RANK`, `LOCAL_RANK`,
+    and `LOCAL_WORLD_SIZE` / `LOCAL_SIZE` to determine local process counts.
     """
     try:
-        local_rank = int(os.environ.get('LOCAL_RANK', os.environ.get('LOCAL_RANK', 0)))
+        local_rank = int(os.environ.get('LOCAL_RANK', os.environ.get('LOCAL_RANK', '0')))
     except Exception:
         local_rank = 0
     try:
-        world_size = int(os.environ.get('WORLD_SIZE', '1'))
+        world_size = int(os.environ.get('WORLD_SIZE', os.environ.get('WORLD_SIZE', '1')))
     except Exception:
         world_size = 1
 
-    # set device for this process if GPUs available
+    # set CUDA device for this process
     try:
         if torch.cuda.is_available():
             try:
@@ -59,8 +59,59 @@ def setup_ddp_from_env():
     except Exception:
         pass
 
+    # init torch.distributed if needed
+    try:
+        if torch.distributed.is_available() and not torch.distributed.is_initialized() and world_size > 1:
+            backend = 'nccl' if torch.cuda.is_available() else 'gloo'
+            try:
+                torch.distributed.init_process_group(backend=backend, init_method='env://')
+                rank = int(os.environ.get('RANK', os.environ.get('LOCAL_RANK', '0')))
+                print(f"DDP INIT: backend={backend} RANK={rank} LOCAL_RANK={local_rank} WORLD_SIZE={world_size}")
+            except Exception as e:
+                print(f"[WARN] torch.distributed.init_process_group failed: {e}")
+    except Exception as e:
+        print(f"[WARN] DDP setup problem: {e}")
 
-def finalize_ddp(wait_seconds: float = 1.0):
+    # Ensure detectron2 local process group exists
+    try:
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            try:
+                from detectron2.utils import comm as d2comm
+                try:
+                    n_local = int(os.environ.get('LOCAL_WORLD_SIZE', os.environ.get('LOCAL_SIZE', os.environ.get('NPROC_PER_NODE', '1'))))
+                except Exception:
+                    n_local = 1
+                if n_local < 1:
+                    n_local = 1
+                try:
+                    d2comm.create_local_process_group(n_local)
+                    print(f"Created detectron2 local process group with {n_local} local workers")
+                except Exception as e:
+                    print(f"[WARN] Could not create detectron2 local process group: {e}")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # tuning
+    try:
+        torch.backends.cudnn.benchmark = True
+    except Exception:
+        pass
+    try:
+        os.environ.setdefault('OMP_NUM_THREADS', '4')
+        os.environ.setdefault('MKL_NUM_THREADS', '4')
+        torch.set_num_threads(int(os.environ.get('OMP_NUM_THREADS', '4')))
+    except Exception:
+        pass
+
+    try:
+        print(f"DDP START host={socket.gethostname()} RANK={os.environ.get('RANK')} LOCAL_RANK={local_rank} WORLD_SIZE={world_size}")
+    except Exception:
+        pass
+
+
+def finalize_ddp(wait_seconds: float = 3.0):
     """Attempt a graceful distributed shutdown.
 
     - Synchronize CUDA on each device to flush kernels.
@@ -153,68 +204,7 @@ def finalize_ddp(wait_seconds: float = 1.0):
 
 
 
-# DDP / device setup: prefer LOCAL_RANK mapping used by torch.distributed.run
-try:
-    import time, socket
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    rank_env = os.environ.get('RANK')
-    world_env = os.environ.get('WORLD_SIZE')
-    # set CUDA device if available
-    if torch.cuda.is_available():
-        try:
-            torch.cuda.set_device(local_rank)
-        except Exception:
-            pass
-    # Initialize process group for distributed training when appropriate.
-    try:
-        if torch.distributed.is_available() and not torch.distributed.is_initialized():
-            # Only init when we have a WORLD_SIZE > 1 (torchrun sets WORLD_SIZE)
-            try:
-                ws = int(os.environ.get('WORLD_SIZE', '1'))
-            except Exception:
-                ws = 1
-            if ws > 1:
-                backend = 'nccl' if torch.cuda.is_available() else 'gloo'
-                try:
-                    torch.distributed.init_process_group(backend=backend, init_method='env://')
-                    print(f"DDP INIT: backend={backend} RANK={os.environ.get('RANK')} LOCAL_RANK={local_rank} WORLD_SIZE={os.environ.get('WORLD_SIZE')}")
-                except Exception as e:
-                    print(f"[WARN] torch.distributed.init_process_group failed: {e}")
-    except Exception:
-        pass
-    # enable cudnn autotuner for potentially faster kernels
-    try:
-        torch.backends.cudnn.benchmark = True
-    except Exception:
-        pass
-    # set sensible CPU thread defaults if not provided
-    try:
-        os.environ.setdefault('OMP_NUM_THREADS', '4')
-        os.environ.setdefault('MKL_NUM_THREADS', '4')
-        torch.set_num_threads(int(os.environ.get('OMP_NUM_THREADS', '4')))
-    except Exception:
-        pass
-
-    print(f"DDP START host={socket.gethostname()} RANK={rank_env} LOCAL_RANK={local_rank} WORLD_SIZE={world_env}")
-    # write a small heartbeat file to /workspace so it's visible on host via the bind-mount
-    try:
-        hb_dir = '/workspace'
-        if not os.path.isdir(hb_dir):
-            # fallback to current working dir
-            hb_dir = os.getcwd()
-        hb_name = f"ddp_heartbeat_rank_{rank_env if rank_env is not None else local_rank}.txt"
-        hb_path = os.path.join(hb_dir, hb_name)
-        # ensure parent exists
-        try:
-            open(hb_path, 'a').close()
-            with open(hb_path, 'a') as hf:
-                hf.write(f"start {time.time()} host={socket.gethostname()} cwd={os.getcwd()}\n")
-        except Exception as e:
-            print(f"[WARN] Could not write heartbeat file {hb_path}: {e}")
-    except Exception as e:
-        print(f"[WARN] Heartbeat setup failed: {e}")
-except Exception:
-    pass
+# (DDP initialization is handled by `setup_ddp_from_env()` where needed)
 
 
 # -----------------------------
@@ -1204,6 +1194,17 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
         print("\n--- TRAINING COMPLETE ---\n")
         print("Predicting validation grids...")
         predict_multiple_grids(cfg, val_dataset_name, grid_count=1, per_grid=6, out_prefix="val_grid", score_thresh=0.6, visualizer_scale=1.0, visualizer_min_distance=30, visualizer_y_offset=10)
+        # ensure CUDA kernels have finished and synchronize with other ranks before teardown
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+        except Exception:
+            pass
+        try:
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                torch.distributed.barrier()
+        except Exception:
+            pass
     else:
         # non-main ranks wait until main finishes IO to ensure files are written
         try:
