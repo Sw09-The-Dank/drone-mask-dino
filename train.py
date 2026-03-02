@@ -328,16 +328,22 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     train_img_root = _choose_existing_root(train_img_root, [os.path.join('images','train'), 'images', os.path.join('dataset','images','train')])
     val_img_root = _choose_existing_root(val_img_root, [os.path.join('images','val'), 'images', os.path.join('dataset','images','val')])
 
-    if os.path.isfile(train_json_path):
-        register_coco_instances(train_name, {}, train_json_path, train_img_root)
-        print(f"Registered {train_name} -> {train_json_path} (images root: {train_img_root})")
-    else:
-        print(f"[WARN] Train JSON not found: {train_json_path}")
-    if os.path.isfile(val_json_path):
-        register_coco_instances(val_name, {}, val_json_path, val_img_root)
-        print(f"Registered {val_name} -> {val_json_path} (images root: {val_img_root})")
-    else:
-        print(f"[WARN] Val JSON not found: {val_json_path}")
+    # Require both train and val JSONs to exist at this point; abort early if missing.
+    train_exists = os.path.isfile(train_json_path)
+    val_exists = os.path.isfile(val_json_path)
+    if not train_exists:
+        print(f"[ERROR] Train JSON not found: {train_json_path}")
+    if not val_exists:
+        print(f"[ERROR] Val JSON not found: {val_json_path}")
+    if not (train_exists and val_exists):
+        print("[ERROR] Required annotation JSON file(s) missing; aborting.")
+        raise SystemExit(1)
+
+    # Both JSONs present — register them.
+    register_coco_instances(train_name, {}, train_json_path, train_img_root)
+    print(f"Registered {train_name} -> {train_json_path} (images root: {train_img_root})")
+    register_coco_instances(val_name, {}, val_json_path, val_img_root)
+    print(f"Registered {val_name} -> {val_json_path} (images root: {val_img_root})")
 
     # Load registered dataset dicts and sanitize segmentation entries; then re-register cleaned datasets
     from detectron2.data import DatasetCatalog, MetadataCatalog
