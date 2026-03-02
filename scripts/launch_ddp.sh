@@ -62,34 +62,6 @@ echo "Launching DDP: nnodes=${NNODES}, nproc_per_node=${NPROC_PER_NODE}, node_ra
 echo "NCCL_DEBUG=${NCCL_DEBUG}, NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}, NCCL_IB_DISABLE=${NCCL_IB_DISABLE}, NCCL_P2P_LEVEL=${NCCL_P2P_LEVEL}, NCCL_SOCKET_RETRY_CNT=${NCCL_SOCKET_RETRY_CNT}, NCCL_SOCKET_RETRY_SLEEP_MSEC=${NCCL_SOCKET_RETRY_SLEEP_MSEC}, NCCL_NET_GDR_LEVEL=${NCCL_NET_GDR_LEVEL}, NCCL_IB_HCA=${NCCL_IB_HCA}"
 
 
-if [ "${NODE_RANK}" -ne 0 ]; then
-  echo "Probing master ${MASTER_ADDR}:${MASTER_PORT} (retries=${PROBE_RETRIES}, delay=${PROBE_DELAY}s)"
-  PROBE_OK=1
-  for i in $(seq 1 ${PROBE_RETRIES}); do
-    # quick TCP connect using python to avoid dependency on nc
-    python - <<PYCODE
-import socket,sys
-try:
-    s=socket.socket()
-    s.settimeout(2.0)
-    s.connect(("${MASTER_ADDR}", int(${MASTER_PORT})))
-    s.close()
-    sys.exit(0)
-except Exception:
-    sys.exit(1)
-PYCODE
-    if [ $? -eq 0 ]; then
-      PROBE_OK=0
-      break
-    fi
-    sleep ${PROBE_DELAY}
-  done
-  if [ ${PROBE_OK} -ne 0 ]; then
-    echo "ERROR: master ${MASTER_ADDR}:${MASTER_PORT} not reachable after ${PROBE_RETRIES} probes — aborting to avoid long retries."
-    exit 3
-  fi
-fi
-
 # Run torch distributed launcher (torch.distributed.run)
 python -m torch.distributed.run \
   --nproc_per_node=${NPROC_PER_NODE} \
