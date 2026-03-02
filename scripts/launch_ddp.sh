@@ -23,6 +23,27 @@ shift 5
 # Remaining args after `--` will be forwarded to train.py
 EXTRA_ARGS=("$@")
 
+# Rendezvous configuration: allow reducing retries/total wait by setting
+# RDZV_TIMEOUT_MS (milliseconds) or RDZV_CONF (additional k=v pairs).
+# Example to limit rendezvous timeout to 60s before failing:
+#   RDZV_TIMEOUT_MS=60000 ./scripts/launch_ddp.sh 2 8 0 10.0.0.1 29500 -- --config cfg.yaml
+: "${RDZV_TIMEOUT_MS:=}"
+: "${RDZV_CONF:=}"
+
+# If RDZV_TIMEOUT_MS is set, include it in --rdzv-conf (timeout is in ms)
+RDZV_FLAGS=""
+if [ -n "${RDZV_TIMEOUT_MS}" ]; then
+  if [ -n "${RDZV_CONF}" ]; then
+    RDZV_CONF="${RDZV_CONF},timeout=${RDZV_TIMEOUT_MS}"
+  else
+    RDZV_CONF="timeout=${RDZV_TIMEOUT_MS}"
+  fi
+fi
+if [ -n "${RDZV_CONF}" ]; then
+  # Use c10d rendezvous backend with explicit endpoint (master addr:port)
+  RDZV_FLAGS="--rdzv-backend=c10d --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT} --rdzv-conf ${RDZV_CONF}"
+fi
+
 # Recommended NCCL tuning for multi-node GPU training. Adjust interface to match
 # your DGX network (e.g. mlx5_0 for InfiniBand, eth0 for ethernet). You can override
 # these by exporting the environment variables before running the script. The Dockerfile
@@ -61,6 +82,38 @@ fi
 echo "Launching DDP: nnodes=${NNODES}, nproc_per_node=${NPROC_PER_NODE}, node_rank=${NODE_RANK}, master_addr=${MASTER_ADDR}, master_port=${MASTER_PORT}"
 echo "NCCL_DEBUG=${NCCL_DEBUG}, NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}, NCCL_IB_DISABLE=${NCCL_IB_DISABLE}, NCCL_P2P_LEVEL=${NCCL_P2P_LEVEL}, NCCL_SOCKET_RETRY_CNT=${NCCL_SOCKET_RETRY_CNT}, NCCL_SOCKET_RETRY_SLEEP_MSEC=${NCCL_SOCKET_RETRY_SLEEP_MSEC}, NCCL_NET_GDR_LEVEL=${NCCL_NET_GDR_LEVEL}, NCCL_IB_HCA=${NCCL_IB_HCA}"
 
+# Fast pre-check to avoid torchrun performing many long TCPStore retries.
+# Configure small number of short probes to master:port and exit early if unreachable.
+: "${PROBE_RETRIES:=3}"
+: "${PROBE_DELAY:=2}"
+if [ "${NODE_RANK}" -ne 0 ]; then
+  echo "Probing master ${MASTER_ADDR}:${MASTER_PORT} (retries=${PROBE_RETRIES}, delay=${PROBE_DELAY}s)"
+  PROBE_OK=1
+  for i in $(seq 1 ${PROBE_RETRIES}); do
+    # quick TCP connect using python to avoid dependency on nc
+    python - <<PYCODE
+import socket,sys
+try:
+    s=socket.socket()
+    s.settimeout(2.0)
+    s.connect(("${MASTER_ADDR}", int(${MASTER_PORT})))
+    s.close()
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+PYCODE
+    if [ $? -eq 0 ]; then
+      PROBE_OK=0
+      break
+    fi
+    sleep ${PROBE_DELAY}
+  done
+  if [ ${PROBE_OK} -ne 0 ]; then
+    echo "ERROR: master ${MASTER_ADDR}:${MASTER_PORT} not reachable after ${PROBE_RETRIES} probes — aborting to avoid long retries."
+    exit 3
+  fi
+fi
+
 # Run torch distributed launcher (torch.distributed.run)
 python -m torch.distributed.run \
   --nproc_per_node=${NPROC_PER_NODE} \
@@ -68,6 +121,7 @@ python -m torch.distributed.run \
   --node_rank=${NODE_RANK} \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
+  ${RDZV_FLAGS} \
   train.py "${EXTRA_ARGS[@]}"
 
 echo "DDP launcher exited with status $?"

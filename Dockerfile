@@ -81,6 +81,7 @@ ENV NCCL_IB_DISABLE=0
 ENV NCCL_NET_GDR_LEVEL=2
 ENV NCCL_SOCKET_IFNAME=enp1s0f1np1
 ENV NCCL_IB_HCA=mlx5 
+ENV RDZV_TIMEOUT_MS=2000
 
 # Default command: run training script using the created virtualenv
 CMD ["/opt/venv/bin/python", "train.py"]
