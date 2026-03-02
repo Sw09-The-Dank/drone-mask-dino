@@ -23,27 +23,6 @@ shift 5
 # Remaining args after `--` will be forwarded to train.py
 EXTRA_ARGS=("$@")
 
-# Rendezvous configuration: allow reducing retries/total wait by setting
-# RDZV_TIMEOUT_MS (milliseconds) or RDZV_CONF (additional k=v pairs).
-# Example to limit rendezvous timeout to 60s before failing:
-#   RDZV_TIMEOUT_MS=60000 ./scripts/launch_ddp.sh 2 8 0 10.0.0.1 29500 -- --config cfg.yaml
-: "${RDZV_TIMEOUT_MS:= 2000}"
-: "${RDZV_CONF:= 3}"
-
-# If RDZV_TIMEOUT_MS is set, include it in --rdzv-conf (timeout is in ms)
-RDZV_FLAGS=""
-if [ -n "${RDZV_TIMEOUT_MS}" ]; then
-  if [ -n "${RDZV_CONF}" ]; then
-    RDZV_CONF="${RDZV_CONF},timeout=${RDZV_TIMEOUT_MS}"
-  else
-    RDZV_CONF="timeout=${RDZV_TIMEOUT_MS}"
-  fi
-fi
-if [ -n "${RDZV_CONF}" ]; then
-  # Use c10d rendezvous backend with explicit endpoint (master addr:port)
-  RDZV_FLAGS="--rdzv-backend=c10d --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT} --rdzv-conf ${RDZV_CONF}"
-fi
-
 # Recommended NCCL tuning for multi-node GPU training. Adjust interface to match
 # your DGX network (e.g. mlx5_0 for InfiniBand, eth0 for ethernet). You can override
 # these by exporting the environment variables before running the script. The Dockerfile
@@ -115,6 +94,13 @@ PYCODE
 fi
 
 # Run torch distributed launcher (torch.distributed.run)
+# Rendezvous defaults: allow overriding via RDZV_TIMEOUT_MS (ms) and RDZV_NUM_RETRIES.
+# These will be passed as --rdzv-backend=c10d --rdzv-endpoint=<MASTER>:<PORT> --rdzv-conf <k>=<v>
+: "${RDZV_TIMEOUT_MS:=6000}"
+: "${RDZV_NUM_RETRIES:=3}"
+RDZV_CONF="timeout=${RDZV_TIMEOUT_MS},num_retries=${RDZV_NUM_RETRIES}"
+RDZV_FLAGS="--rdzv-backend=c10d --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT} --rdzv-conf ${RDZV_CONF}"
+echo "RDZV_FLAGS=${RDZV_FLAGS}"
 python -m torch.distributed.run \
   --nproc_per_node=${NPROC_PER_NODE} \
   --nnodes=${NNODES} \
