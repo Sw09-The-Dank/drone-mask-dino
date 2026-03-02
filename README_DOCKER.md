@@ -259,6 +259,7 @@ sudo docker run --gpus all --rm -it \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
+  -v "$(pwd):/workspace" -w /workspace \
   drone-maskdino:latest \
   /bin/bash -lc "
     bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500
@@ -273,6 +274,7 @@ sudo docker run --gpus all --rm -it \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
+  -v "$(pwd):/workspace" -w /workspace \
   drone-maskdino:latest \
   /bin/bash -lc "
     bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500
