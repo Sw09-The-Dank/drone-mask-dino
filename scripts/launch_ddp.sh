@@ -91,10 +91,6 @@ PYCODE
 fi
 
 # Run torch distributed launcher (torch.distributed.run)
-
-RDZV_CONF="timeout=${RDZV_TIMEOUT_MS},num_retries=${RDZV_NUM_RETRIES}"
-RDZV_FLAGS="--rdzv-backend=c10d --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT} --rdzv-conf ${RDZV_CONF}"
-echo "RDZV_FLAGS=${RDZV_FLAGS}"
 python -m torch.distributed.run \
   --nproc_per_node=${NPROC_PER_NODE} \
   --nnodes=${NNODES} \

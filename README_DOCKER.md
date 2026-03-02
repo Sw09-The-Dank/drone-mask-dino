@@ -234,7 +234,7 @@ sudo docker run --gpus all --rm -it \
   --user root \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
-  drone-maskdino:latest \
+  -v "$(pwd)":/workspace -w /workspace \
   /bin/bash -lc "
     ip addr add 10.10.10.2/24 dev enp1s0f1np1
     ip link set enp1s0f1np1 up
@@ -259,7 +259,7 @@ sudo docker run --gpus all --rm -it \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
-  drone-maskdino:latest \
+  -v "$(pwd)":/workspace -w /workspace \
   /bin/bash -lc "
     bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500
   "
