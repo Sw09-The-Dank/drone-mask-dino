@@ -61,10 +61,7 @@ fi
 echo "Launching DDP: nnodes=${NNODES}, nproc_per_node=${NPROC_PER_NODE}, node_rank=${NODE_RANK}, master_addr=${MASTER_ADDR}, master_port=${MASTER_PORT}"
 echo "NCCL_DEBUG=${NCCL_DEBUG}, NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}, NCCL_IB_DISABLE=${NCCL_IB_DISABLE}, NCCL_P2P_LEVEL=${NCCL_P2P_LEVEL}, NCCL_SOCKET_RETRY_CNT=${NCCL_SOCKET_RETRY_CNT}, NCCL_SOCKET_RETRY_SLEEP_MSEC=${NCCL_SOCKET_RETRY_SLEEP_MSEC}, NCCL_NET_GDR_LEVEL=${NCCL_NET_GDR_LEVEL}, NCCL_IB_HCA=${NCCL_IB_HCA}"
 
-# Fast pre-check to avoid torchrun performing many long TCPStore retries.
-# Configure small number of short probes to master:port and exit early if unreachable.
-: "${PROBE_RETRIES:=3}"
-: "${PROBE_DELAY:=2}"
+
 if [ "${NODE_RANK}" -ne 0 ]; then
   echo "Probing master ${MASTER_ADDR}:${MASTER_PORT} (retries=${PROBE_RETRIES}, delay=${PROBE_DELAY}s)"
   PROBE_OK=1
@@ -94,10 +91,7 @@ PYCODE
 fi
 
 # Run torch distributed launcher (torch.distributed.run)
-# Rendezvous defaults: allow overriding via RDZV_TIMEOUT_MS (ms) and RDZV_NUM_RETRIES.
-# These will be passed as --rdzv-backend=c10d --rdzv-endpoint=<MASTER>:<PORT> --rdzv-conf <k>=<v>
-: "${RDZV_TIMEOUT_MS:=6000}"
-: "${RDZV_NUM_RETRIES:=3}"
+
 RDZV_CONF="timeout=${RDZV_TIMEOUT_MS},num_retries=${RDZV_NUM_RETRIES}"
 RDZV_FLAGS="--rdzv-backend=c10d --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT} --rdzv-conf ${RDZV_CONF}"
 echo "RDZV_FLAGS=${RDZV_FLAGS}"
@@ -107,7 +101,7 @@ python -m torch.distributed.run \
   --node_rank=${NODE_RANK} \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
-  ${RDZV_FLAGS} \
   train.py "${EXTRA_ARGS[@]}"
 
 echo "DDP launcher exited with status $?"
+s

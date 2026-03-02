@@ -328,16 +328,60 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     train_img_root = _choose_existing_root(train_img_root, [os.path.join('images','train'), 'images', os.path.join('dataset','images','train')])
     val_img_root = _choose_existing_root(val_img_root, [os.path.join('images','val'), 'images', os.path.join('dataset','images','val')])
 
-    if os.path.isfile(train_json_path):
-        register_coco_instances(train_name, {}, train_json_path, train_img_root)
-        print(f"Registered {train_name} -> {train_json_path} (images root: {train_img_root})")
+    # Attempt to locate train/val JSONs from several common locations and
+    # register the first found path. This is more robust for different CWDs
+    # (e.g. when running inside containers or orchestrators).
+    def _find_json(candidates):
+        for p in candidates:
+            if not p:
+                continue
+            # Try as given first, then relative to cwd
+            try_paths = [p]
+            try_paths.append(os.path.join(os.getcwd(), p))
+            for tp in try_paths:
+                try:
+                    if os.path.isfile(tp):
+                        return os.path.abspath(tp)
+                except Exception:
+                    continue
+        return None
+
+    train_candidates = [train_json_path,
+                        os.path.join('output_annotations', os.path.basename(train_json_path)),
+                        os.path.join('dataset', 'annotations', os.path.basename(train_json_path)),
+                        os.path.join('annotations', os.path.basename(train_json_path)),
+                        os.path.join('dataset', 'annotations', 'train.json'),
+                        os.path.join('output_annotations', 'train.json'),
+                        os.path.join('annotations', 'train.json')]
+    val_candidates = [val_json_path,
+                      os.path.join('output_annotations', os.path.basename(val_json_path)),
+                      os.path.join('dataset', 'annotations', os.path.basename(val_json_path)),
+                      os.path.join('annotations', os.path.basename(val_json_path)),
+                      os.path.join('dataset', 'annotations', 'val.json'),
+                      os.path.join('output_annotations', 'val.json'),
+                      os.path.join('annotations', 'val.json')]
+
+    found_train = _find_json(train_candidates)
+    if found_train:
+        try:
+            register_coco_instances(train_name, {}, found_train, train_img_root)
+            print(f"Registered {train_name} -> {found_train} (images root: {train_img_root})")
+            train_json_path = found_train
+        except Exception as e:
+            print(f"[WARN] Failed to register train JSON {found_train}: {e}")
     else:
-        print(f"[WARN] Train JSON not found: {train_json_path}")
-    if os.path.isfile(val_json_path):
-        register_coco_instances(val_name, {}, val_json_path, val_img_root)
-        print(f"Registered {val_name} -> {val_json_path} (images root: {val_img_root})")
+        print(f"[WARN] Train JSON not found; searched: {train_candidates}")
+
+    found_val = _find_json(val_candidates)
+    if found_val:
+        try:
+            register_coco_instances(val_name, {}, found_val, val_img_root)
+            print(f"Registered {val_name} -> {found_val} (images root: {val_img_root})")
+            val_json_path = found_val
+        except Exception as e:
+            print(f"[WARN] Failed to register val JSON {found_val}: {e}")
     else:
-        print(f"[WARN] Val JSON not found: {val_json_path}")
+        print(f"[WARN] Val JSON not found; searched: {val_candidates}")
 
     # Load registered dataset dicts and sanitize segmentation entries; then re-register cleaned datasets
     from detectron2.data import DatasetCatalog, MetadataCatalog

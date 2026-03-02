@@ -242,6 +242,12 @@ sudo docker run --gpus all --rm -it \
     bash ./scripts/launch_ddp.sh 2 1 1 10.10.10.1 29500
   "
 ```
+# On DGX1
+sudo ip link set enp1s0f0np0 down
+
+# On DGX2
+sudo ip link set enp1s0f1np1 down
+
 
 
 working!
@@ -252,6 +258,7 @@ sudo docker run --gpus all --rm -it \
   --ipc=host \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
+  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
   drone-maskdino:latest \
   /bin/bash -lc "
     bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500
@@ -265,7 +272,7 @@ sudo docker run --gpus all --rm -it \
   --ipc=host \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
-  -e NCCL_SOCKET_IFNAME=enp1s0f0np0
+  -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
   drone-maskdino:latest \
   /bin/bash -lc "
     bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500
