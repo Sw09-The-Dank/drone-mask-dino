@@ -23,7 +23,12 @@ import numpy as np
 
 # torch is used throughout; ensure it's available and provide DDP helpers
 import torch
+import torch.distributed as dist
 
+dist.init_process_group(
+    backend="nccl",
+    timeout=datetime.timedelta(seconds=30)
+)
 
 # -----------------------------
 # SANITY CHECK: CUDA

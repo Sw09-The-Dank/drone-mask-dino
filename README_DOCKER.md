@@ -207,29 +207,6 @@ docker run --gpus all --rm -it --shm-size=1g \
 
 
 
-Not working
-Master
-```bash
-sudo docker run --gpus all --rm -it \
-  --ipc=host \
-  --ulimit memlock=-1 \
-  --ulimit stack=67108864 \
-  -v "$(pwd):/workspace" -w /workspace \
-  drone-maskdino:latest \
-  /bin/bash -lc "nvidia-smi && bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500 --"
-```
-
-Worker
-```bash
-sudo docker run --gpus all --rm -it \
-  --ipc=host \
-  --ulimit memlock=-1 \
-  --ulimit stack=67108864 \
-  -v "$(pwd):/workspace" -w /workspace \
-  drone-maskdino:latest \
-  /bin/bash -lc "nvidia-smi && bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500 --"
-```
-
 working!
 master
 ```bash
@@ -239,8 +216,6 @@ sudo docker run --gpus all --rm -it \
   --cap-add=NET_ADMIN \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
-  -e NCCL_DEBUG=INFO \
-  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
   drone-maskdino:latest \
   /bin/bash -lc "
     ip addr add 10.10.10.1/24 dev enp1s0f1np1 2>/dev/null || true
@@ -257,8 +232,6 @@ sudo docker run --gpus all --rm -it \
   --cap-add=NET_ADMIN \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
-  -e NCCL_DEBUG=INFO \
-  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
   drone-maskdino:latest \
   /bin/bash -lc "
     ip addr add 10.10.10.2/24 dev enp1s0f1np1 2>/dev/null || true

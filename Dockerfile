@@ -74,6 +74,14 @@ RUN /opt/venv/bin/python -c "import setuptools, pkg_resources; print('BUILD-CHEC
 # Install iproute2 for `ip` command used in training script for network configuration
 RUN apt-get update && apt-get install -y iproute2
 
+# Set NCCL environment variables to improve stability in multi-node training. Adjust values as needed based on your cluster/network conditions. (These settings reduce the number of retries and reduces the sleep time between retries for NCCL socket operations.)
+ENV NCCL_SOCKET_RETRY_CNT=3 
+ENV NCCL_SOCKET_RETRY_SLEEP_MSEC=2000
+ENV NCCL_IB_DISABLE=0
+ENV NCCL_NET_GDR_LEVEL=2
+ENV NCCL_SOCKET_IFNAME=enp1s0f1np1
+ENV NCCL_IB_HCA=mlx5 
+
 # Default command: run training script using the created virtualenv
 CMD ["/opt/venv/bin/python", "train.py"]
 
