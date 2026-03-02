@@ -27,8 +27,8 @@ EXTRA_ARGS=("$@")
 # RDZV_TIMEOUT_MS (milliseconds) or RDZV_CONF (additional k=v pairs).
 # Example to limit rendezvous timeout to 60s before failing:
 #   RDZV_TIMEOUT_MS=60000 ./scripts/launch_ddp.sh 2 8 0 10.0.0.1 29500 -- --config cfg.yaml
-: "${RDZV_TIMEOUT_MS:=}"
-: "${RDZV_CONF:=}"
+: "${RDZV_TIMEOUT_MS:= 2000}"
+: "${RDZV_CONF:= 3}"
 
 # If RDZV_TIMEOUT_MS is set, include it in --rdzv-conf (timeout is in ms)
 RDZV_FLAGS=""

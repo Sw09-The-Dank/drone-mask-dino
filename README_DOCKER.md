@@ -206,14 +206,14 @@ docker run --gpus all --rm -it --shm-size=1g \
   hosts.
 
 
-
-working!
+not working!
 master
 ```bash
 sudo docker run --gpus all --rm -it \
   --network=host \
   --ipc=host \
   --cap-add=NET_ADMIN \
+  --user root \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   drone-maskdino:latest \
@@ -230,12 +230,51 @@ sudo docker run --gpus all --rm -it \
   --network=host \
   --ipc=host \
   --cap-add=NET_ADMIN \
+  --user root \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   drone-maskdino:latest \
   /bin/bash -lc "
-    ip addr add 10.10.10.2/24 dev enp1s0f1np1 2>/dev/null || true
+    ip addr add 10.10.10.2/24 dev enp1s0f1np1
     ip link set enp1s0f1np1 up
+    sysctl -w net.ipv4.conf.enp1s0f1np1.rp_filter=0
     bash ./scripts/launch_ddp.sh 2 1 1 10.10.10.1 29500
+  "
+```
+
+
+working!
+master
+```bash
+sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --cap-add=NET_ADMIN \
+  --user root \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  drone-maskdino:latest \
+  /bin/bash -lc "
+    ip addr add 10.10.10.1/24 dev enp1s0f1np1 2>/dev/null || true
+    ip link set enp1s0f1np1 up
+    bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500
+  "
+```
+
+worker
+```bash
+sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --cap-add=NET_ADMIN \
+  --user root \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  drone-maskdino:latest \
+  /bin/bash -lc "
+    ip addr add 10.10.10.2/24 dev enp1s0f1np1
+    ip link set enp1s0f1np1 up
+    sysctl -w net.ipv4.conf.enp1s0f1np1.rp_filter=0
+    bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500
   "
 ```
