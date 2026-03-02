@@ -332,12 +332,22 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     # register the first found path. This is more robust for different CWDs
     # (e.g. when running inside containers or orchestrators).
     def _find_json(candidates):
+        # Also try paths relative to the script location (repo root when mounted)
+        script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
         for p in candidates:
             if not p:
                 continue
-            # Try as given first, then relative to cwd
-            try_paths = [p]
-            try_paths.append(os.path.join(os.getcwd(), p))
+            # Try several likely interpretations of the path
+            try_paths = [p,
+                         os.path.join(os.getcwd(), p),
+                         os.path.join(script_dir, p)]
+            # If p is just a basename, also try common annotation dirs under repo
+            base = os.path.basename(p)
+            if base and base != p:
+                try_paths.extend([
+                    os.path.join(script_dir, 'output_annotations', base),
+                    os.path.join(os.getcwd(), 'output_annotations', base),
+                ])
             for tp in try_paths:
                 try:
                     if os.path.isfile(tp):
