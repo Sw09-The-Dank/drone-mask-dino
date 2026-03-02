@@ -233,18 +233,36 @@ sudo docker run --gpus all --rm -it \
 working!
 master
 ```bash
-sudo docker run --gpus all --rm -it --network=host --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
-  -e NCCL_DEBUG=INFO -e NCCL_SOCKET_IFNAME=enp1s0f0np0 -e NCCL_IB_DISABLE=0 \
-  -v "$(pwd):/workspace" -w /workspace \
+sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --cap-add=NET_ADMIN \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -e NCCL_DEBUG=INFO \
+  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
   drone-maskdino:latest \
-  /bin/bash -lc "bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500 -- --epochs 1 --ims-per-batch 12 --base-lr 0.00001 --num-workers 10 --no-resume"
+  /bin/bash -lc "
+    ip addr add 10.10.10.1/24 dev enp1s0f1np1 2>/dev/null || true
+    ip link set enp1s0f1np1 up
+    bash ./scripts/launch_ddp.sh 2 1 0 10.10.10.1 29500
+  "
 ```
 
 worker
 ```bash
-sudo docker run --gpus all --rm -it --network=host --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
-  -e NCCL_DEBUG=INFO -e NCCL_SOCKET_IFNAME=enp1s0f0np0 -e NCCL_IB_DISABLE=0 \
-  -v "$(pwd):/workspace" -w /workspace \
+sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --cap-add=NET_ADMIN \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -e NCCL_DEBUG=INFO \
+  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
   drone-maskdino:latest \
-  /bin/bash -lc "bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500 -- --epochs 1 --ims-per-batch 12 --base-lr 0.00001 --num-workers 10 --no-resume"
+  /bin/bash -lc "
+    ip addr add 10.10.10.2/24 dev enp1s0f1np1 2>/dev/null || true
+    ip link set enp1s0f1np1 up
+    bash ./scripts/launch_ddp.sh 2 1 1 10.10.10.1 29500
+  "
 ```

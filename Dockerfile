@@ -71,6 +71,9 @@ RUN ln -sf /opt/venv/bin/python /usr/local/bin/python \
 # Verify setuptools/pkg_resources are importable in the venv (do not downgrade on Python 3.12+).
 RUN /opt/venv/bin/python -c "import setuptools, pkg_resources; print('BUILD-CHECK setuptools', setuptools.__version__, 'pkg_resources OK', getattr(pkg_resources,'__file__',None))"
 
+# Install iproute2 for `ip` command used in training script for network configuration
+RUN apt-get update && apt-get install -y iproute2
+
 # Default command: run training script using the created virtualenv
 CMD ["/opt/venv/bin/python", "train.py"]
 
