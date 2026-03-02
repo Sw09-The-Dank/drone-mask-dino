@@ -331,6 +331,41 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     # Require both train and val JSONs to exist at this point; abort early if missing.
     train_exists = os.path.isfile(train_json_path)
     val_exists = os.path.isfile(val_json_path)
+    # If either JSON is missing, emit helpful debug information to locate the problem
+    if not train_exists or not val_exists:
+        try:
+            print(f"[DEBUG] CWD: {os.getcwd()}")
+        except Exception:
+            pass
+        try:
+            try:
+                print(f"[DEBUG] train_json_path abs: {os.path.abspath(train_json_path)}")
+            except Exception:
+                print("[DEBUG] Could not compute abs path for train_json_path")
+            try:
+                print(f"[DEBUG] val_json_path abs: {os.path.abspath(val_json_path)}")
+            except Exception:
+                print("[DEBUG] Could not compute abs path for val_json_path")
+
+            for name, path, exists in (("train", train_json_path, train_exists), ("val", val_json_path, val_exists)):
+                try:
+                    parent = os.path.dirname(path) or '.'
+                    print(f"[DEBUG] {name} parent dir: {parent} (abs: {os.path.abspath(parent)}) exists={os.path.isdir(parent)}")
+                    try:
+                        print(f"[DEBUG] {name} parent dir listing: {os.listdir(parent)}")
+                    except Exception as e:
+                        print(f"[DEBUG] Could not list {parent}: {e}")
+                    try:
+                        # show any similar files that might hint at naming/casing issues
+                        similar = glob.glob(os.path.join(parent, f"*{os.path.basename(path)}")) or glob.glob(os.path.join(parent, f"*{name}*.json"))
+                        print(f"[DEBUG] {name} similar files in dir: {similar}")
+                    except Exception as e:
+                        print(f"[DEBUG] glob failed: {e}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     if not train_exists:
         print(f"[ERROR] Train JSON not found: {train_json_path}")
     if not val_exists:
