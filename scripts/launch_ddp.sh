@@ -25,15 +25,26 @@ EXTRA_ARGS=("$@")
 
 # Recommended NCCL tuning for multi-node GPU training. Adjust interface to match
 # your DGX network (e.g. mlx5_0 for InfiniBand, eth0 for ethernet). You can override
-# by exporting these variables before running the script.
+# these by exporting the environment variables before running the script. The Dockerfile
+# sets sane defaults for containers; this script will use those if present or fall back
+# to the same defaults here so running outside the container still behaves similarly.
 : "${NCCL_DEBUG:=INFO}"
-: "${NCCL_SOCKET_IFNAME:=eth0}"
+: "${NCCL_SOCKET_IFNAME:=enp1s0f1np1}"
 : "${NCCL_IB_DISABLE:=0}"
+: "${NCCL_P2P_LEVEL:=SYS}"
+: "${NCCL_SOCKET_RETRY_CNT:=3}"
+: "${NCCL_SOCKET_RETRY_SLEEP_MSEC:=2000}"
+: "${NCCL_NET_GDR_LEVEL:=2}"
+: "${NCCL_IB_HCA:=mlx5}"
 
 export NCCL_DEBUG=${NCCL_DEBUG:-INFO}
-export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-eth0}
+export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-enp1s0f1np1}
 export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-0}
-export NCCL_P2P_LEVEL=SYS
+export NCCL_P2P_LEVEL=${NCCL_P2P_LEVEL:-SYS}
+export NCCL_SOCKET_RETRY_CNT=${NCCL_SOCKET_RETRY_CNT:-3}
+export NCCL_SOCKET_RETRY_SLEEP_MSEC=${NCCL_SOCKET_RETRY_SLEEP_MSEC:-2000}
+export NCCL_NET_GDR_LEVEL=${NCCL_NET_GDR_LEVEL:-2}
+export NCCL_IB_HCA=${NCCL_IB_HCA:-mlx5}
 
 # Auto-detect network interface used to reach MASTER_ADDR when the user left the
 # default interface (eth0) or did not set NCCL_SOCKET_IFNAME. This helps common
@@ -48,7 +59,7 @@ if [ "${NCCL_SOCKET_IFNAME:-}" = "eth0" ] || [ -z "${NCCL_SOCKET_IFNAME:-}" ]; t
 fi
 
 echo "Launching DDP: nnodes=${NNODES}, nproc_per_node=${NPROC_PER_NODE}, node_rank=${NODE_RANK}, master_addr=${MASTER_ADDR}, master_port=${MASTER_PORT}"
-echo "NCCL_DEBUG=${NCCL_DEBUG}, NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}, NCCL_IB_DISABLE=${NCCL_IB_DISABLE}"
+echo "NCCL_DEBUG=${NCCL_DEBUG}, NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}, NCCL_IB_DISABLE=${NCCL_IB_DISABLE}, NCCL_P2P_LEVEL=${NCCL_P2P_LEVEL}, NCCL_SOCKET_RETRY_CNT=${NCCL_SOCKET_RETRY_CNT}, NCCL_SOCKET_RETRY_SLEEP_MSEC=${NCCL_SOCKET_RETRY_SLEEP_MSEC}, NCCL_NET_GDR_LEVEL=${NCCL_NET_GDR_LEVEL}, NCCL_IB_HCA=${NCCL_IB_HCA}"
 
 # Run torch distributed launcher (torch.distributed.run)
 python -m torch.distributed.run \
