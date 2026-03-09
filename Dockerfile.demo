@@ -1,0 +1,77 @@
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib:$LD_LIBRARY_PATH
+ENV TORCH_CUDA_ARCH_LIST="12.0;12.1+PTX;8.6;8.0;7.5"
+SHELL ["/bin/bash", "-lc"]
+WORKDIR /workspace
+
+# Copy requirements for caching
+COPY requirements.txt /workspace/requirements.txt
+COPY MaskDINO/requirements.txt /workspace/MaskDINO-requirements.txt
+
+# Minimal system deps for runtime
+# Remove NVIDIA/CUDA apt lists (they cause NO_PUBKEY errors in some base images),
+# then install minimal packages.
+RUN set -eux; \
+    rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia* || true; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        wget bzip2 ca-certificates libgl1 gnupg dirmngr git build-essential cmake python3-dev ninja-build && rm -rf /var/lib/apt/lists/*
+
+# Install Miniconda (skip if already present in base image)
+ENV CONDA_DIR=/opt/conda
+RUN set -eux; \
+    if [ ! -d "${CONDA_DIR}" ]; then \
+        wget -qO /tmp/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-py38_4.9.2-Linux-x86_64.sh; \
+        bash /tmp/miniconda.sh -b -p "${CONDA_DIR}"; \
+        rm /tmp/miniconda.sh; \
+    else \
+        echo "Conda already installed at ${CONDA_DIR}, skipping install"; \
+    fi; \
+    "${CONDA_DIR}"/bin/conda clean -ya || true
+
+# Create runtime env and install Python deps (MaskDINO + repo requirements)
+RUN set -eux; \
+    ${CONDA_DIR}/bin/conda create -y -n maskdino python=3.8
+
+RUN set -eux; \
+    echo "Upgrading pip/setuptools/wheel in maskdino env"; \
+    ${CONDA_DIR}/bin/conda run -n maskdino pip install --upgrade pip setuptools wheel
+
+RUN set -eux; \
+    echo "Installing opencv-python"; \
+    ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-cache-dir -U opencv-python
+
+RUN set -eux; \
+    echo "Installing repo Python requirements"; \
+    ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-cache-dir -r /workspace/requirements.txt -r /workspace/MaskDINO-requirements.txt; \
+    echo "Pinning pillow and scikit-image for compatibility"; \
+    ${CONDA_DIR}/bin/conda run -n maskdino python -m pip install --no-cache-dir 'pillow==9.4.0' 'scikit-image==0.20.0'; \
+    echo "Installing detectron2 from source to match PyTorch/CUDA"; \
+    ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-cache-dir 'git+https://github.com/facebookresearch/detectron2.git'
+
+# Use the conda env Python by default
+ENV PATH=${CONDA_DIR}/envs/maskdino/bin:${PATH}
+ENV CONDA_DEFAULT_ENV=maskdino
+
+# Copy repository (demo expects MaskDINO/ and configs present)
+COPY . /workspace
+
+
+# NOTE: Building CUDA extensions inside the image can fail when the build
+# toolchain or CUDA target list doesn't match the host GPU / driver.
+# We skip compiling the MultiScaleDeformableAttention op at image-build time.
+# To compile it later (inside the container where nvcc/toolchain are available),
+# run `/workspace/build_ops.sh` after starting the container and ensuring
+# the host's CUDA toolkit is accessible.
+COPY build_ops.sh /workspace/build_ops.sh
+RUN chmod +x /workspace/build_ops.sh
+
+# Try compiling CUDA ops during image build (non-fatal). If it fails,
+# the container can build at runtime using /workspace/build_ops.sh.
+RUN set -eux; \
+    echo "Attempting to compile CUDA ops at image build time (may fail)"; \
+    /workspace/build_ops.sh || echo "build_ops.sh failed during image build; will compile at runtime if needed"
+
+# Default command: run the MaskDINO demo script. Override with container args if needed.
+CMD ["/opt/conda/envs/maskdino/bin/python","MaskDINO/demo/demo.py","--config-file","/workspace/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"]
