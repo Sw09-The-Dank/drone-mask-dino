@@ -77,6 +77,13 @@ RUN set -eux; \
     echo "Upgrading pip/setuptools/wheel in maskdino env"; \
     ${CONDA_DIR}/bin/conda run -n maskdino pip install --upgrade pip setuptools wheel
 
+# Install CUDA-enabled PyTorch into the conda env so we have a GPU-capable torch
+RUN set -eux; \
+    echo "Installing CUDA-enabled PyTorch (pytorch-cuda=12.1) into maskdino env"; \
+    ${CONDA_DIR}/bin/conda run -n maskdino conda install -y -c pytorch -c nvidia pytorch torchvision torchaudio pytorch-cuda=12.1 || \
+    (echo "conda install failed; falling back to pip+wheel from pytorch extra index"; \
+     ${CONDA_DIR}/bin/conda run -n maskdino pip install --extra-index-url https://download.pytorch.org/whl/cu121 torch torchvision torchaudio)
+
 RUN set -eux; \
     echo "Installing opencv-python"; \
     ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-cache-dir -U opencv-python
