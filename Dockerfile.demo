@@ -26,12 +26,7 @@ RUN set -eux; \
     pip install -r /workspace/requirements.txt || true; \
     pip install -r /workspace/MaskDINO-requirements.txt || true
 
-# Install detectron2 (from source matching installed torch) and common extras
-RUN set -eux; \
-    git clone --depth 1 https://github.com/facebookresearch/detectron2.git /workspace/detectron2 || true; \
-    pip install -e /workspace/detectron2 || pip install git+https://github.com/facebookresearch/detectron2.git || true; \
-    pip install git+https://github.com/cocodataset/panopticapi.git || true; \
-    pip install git+https://github.com/mcordts/cityscapesScripts.git || true
+# (detectron2 will be installed after copying workspace so local source is used)
 
 # Copy repository into image (demo expects MaskDINO/ and configs present)
 COPY . /workspace
@@ -43,6 +38,18 @@ RUN chmod +x /workspace/build_ops.sh || true
 # Note: building CUDA extensions (MSDeformAttn) may need to be run inside the
 # container where the host CUDA toolkit is available. To compile at runtime:
 #    /workspace/build_ops.sh
+
+## Install detectron2 (prefer local source) and common extras after workspace copy
+RUN set -eux; \
+    # ensure pip tools are up to date
+    python -m pip install --upgrade pip setuptools wheel; \
+    if [ -d /workspace/detectron2 ]; then \
+        python -m pip install -e /workspace/detectron2 --no-build-isolation; \
+    else \
+        python -m pip install --no-build-isolation git+https://github.com/facebookresearch/detectron2.git; \
+    fi; \
+    python -m pip install git+https://github.com/cocodataset/panopticapi.git; \
+    python -m pip install git+https://github.com/mcordts/cityscapesScripts.git
 
 # Default command runs the demo; override as needed
 CMD ["python","MaskDINO/demo/demo.py","--config-file","/workspace/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"]
