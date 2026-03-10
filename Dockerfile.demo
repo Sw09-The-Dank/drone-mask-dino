@@ -88,7 +88,7 @@ RUN set -eux; \
     echo "Installing CUDA-enabled PyTorch (GPU) into maskdino env"; \
     if [ "${TARGETARCH:-}" = "arm64" ]; then \
         echo "Detected arm64: installing wheel-based PyTorch (cu130) via pip"; \
-        ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-deps --index-url https://download.pytorch.org/whl/cu130 \ \
+        ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-deps --index-url https://download.pytorch.org/whl/cu130 \ 
             "torch==2.0.1" "torchvision==0.17.0" "torchaudio==2.2.0" || (echo "pip install of torch wheel failed" && exit 1); \
     else \
         echo "Detected x86_64: installing with conda using MaskDINO recommended versions"; \
