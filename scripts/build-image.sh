@@ -42,19 +42,36 @@ fi
 
 echo "Generating temporary Dockerfile using base image: ${BASE_IMAGE} for ${PLATFORM}"
 
-# Quick check: ensure the requested base image has metadata (manifests) for the registry
-if ! docker buildx imagetools inspect "$BASE_IMAGE" >/dev/null 2>&1; then
-  echo "ERROR: unable to find metadata for base image: $BASE_IMAGE" >&2
-  echo "Run 'docker buildx imagetools inspect $BASE_IMAGE' to view available manifests and platforms." >&2
-  echo "If the image has no arm64 variant, choose a different base (vendor aarch64/CUDA image for Jetson) or use an Ubuntu base and install PyTorch for aarch64." >&2
-  exit 3
+# Quick check: if buildx imagetools is available, warn when metadata is missing
+if command -v docker >/dev/null 2>&1 && docker buildx >/dev/null 2>&1; then
+  if ! docker buildx imagetools inspect "$BASE_IMAGE" >/dev/null 2>&1; then
+    echo "WARNING: unable to find metadata for base image: $BASE_IMAGE" >&2
+    echo "Run 'docker buildx imagetools inspect $BASE_IMAGE' to view available manifests and platforms." >&2
+    echo "Continuing, but the build may fail if the image/tag doesn't exist for the target platform." >&2
+  fi
 fi
 
-# Create tmp with explicit FROM and append everything after the first FROM in original
-printf "FROM --platform=%s %s\n" "$PLATFORM" "$BASE_IMAGE" > "$tmp_dockerfile"
+# Detect host platform and prefer plain docker build when host matches requested platform
+host_uname=$(uname -m)
+case "$host_uname" in
+  x86_64) host_platform=linux/amd64 ;;
+  aarch64|arm64) host_platform=linux/arm64 ;;
+  *) host_platform=unknown ;;
+esac
+
+# Create tmp with explicit FROM line. Use --platform only when cross-building.
+if [ "$PLATFORM" = "$host_platform" ]; then
+  printf "FROM %s\n" "$BASE_IMAGE" > "$tmp_dockerfile"
+else
+  printf "FROM --platform=%s %s\n" "$PLATFORM" "$BASE_IMAGE" > "$tmp_dockerfile"
+fi
 awk 'found==0 && /^FROM /{found=1; next} found==1{print}' "$orig_dockerfile" >> "$tmp_dockerfile"
 
-BUILD_CMD=(docker buildx build --platform "$PLATFORM" --pull --progress=plain -t "$IMAGE_TAG" -f "$tmp_dockerfile" .)
+if [ "$PLATFORM" = "$host_platform" ]; then
+  BUILD_CMD=(docker build --pull --progress=plain -t "$IMAGE_TAG" -f "$tmp_dockerfile" .)
+else
+  BUILD_CMD=(docker buildx build --platform "$PLATFORM" --pull --progress=plain -t "$IMAGE_TAG" -f "$tmp_dockerfile" .)
+fi
 if [ "$NO_CACHE" -eq 1 ]; then
   BUILD_CMD+=(--no-cache)
 fi
