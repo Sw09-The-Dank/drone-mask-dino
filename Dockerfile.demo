@@ -81,8 +81,9 @@ RUN set -eux; \
 # torch and do not replace it later.
 RUN set -eux; \
     echo "Installing CUDA-enabled PyTorch (GPU) into maskdino env"; \
-    CANDIDATES=("${CUDA_VERSION}" "13.0" "12.1"); \
-    TORCH_VERSION="2.2.0"; TV_VERSION="0.17.0"; TA_VERSION="2.2.0"; \
+    # Prefer known-working wheel for manylinux aarch64 (cu130), then fall back
+    CANDIDATES=("13.0" "${CUDA_VERSION}" "12.1"); \
+    TORCH_VERSION="2.0.1"; TV_VERSION="0.17.0"; TA_VERSION="2.2.0"; \
     success=0; \
     for ver in "${CANDIDATES[@]}"; do \
         case "${ver}" in \
