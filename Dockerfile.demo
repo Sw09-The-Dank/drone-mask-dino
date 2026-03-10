@@ -48,6 +48,13 @@ RUN set -eux; \
 # Copy repository into image (demo expects MaskDINO/ and configs present)
 COPY . /workspace
 
+## Copy compiled CUDA ops from builder stage into final workspace (if any)
+COPY --from=builder /workspace/maskdino/modeling/pixel_decoder/ops /workspace/maskdino/modeling/pixel_decoder/ops_built || true
+RUN set -eux; \
+    if [ -d /workspace/maskdino/modeling/pixel_decoder/ops_built ]; then \
+        cp -a /workspace/maskdino/modeling/pixel_decoder/ops_built/* /workspace/maskdino/modeling/pixel_decoder/ops/ || true; \
+    fi
+
 # Make the provided helper executable
 COPY build_ops.sh /workspace/build_ops.sh
 RUN chmod +x /workspace/build_ops.sh || true
