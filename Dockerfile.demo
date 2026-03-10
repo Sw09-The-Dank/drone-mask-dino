@@ -53,8 +53,15 @@ RUN set -eux; \
 # Install Miniconda (skip if already present in base image)
 ENV CONDA_DIR=/opt/conda
 RUN set -eux; \
+    # Choose architecture-appropriate Miniconda installer when needed. If the
+    # user provided an explicit CONDA_INSTALLER_URL, prefer it unless it points
+    # to an x86_64 binary while building for arm64.
+    installer="${CONDA_INSTALLER_URL}"; \
+    if [ "${TARGETARCH:-}" = "arm64" ] && echo "${installer}" | grep -q "x86_64"; then \
+        installer="https://repo.anaconda.com/miniconda/Miniconda3-py38_4.9.2-Linux-aarch64.sh"; \
+    fi; \
     if [ ! -d "${CONDA_DIR}" ]; then \
-        wget -qO /tmp/miniconda.sh "${CONDA_INSTALLER_URL}"; \
+        wget -qO /tmp/miniconda.sh "${installer}"; \
         bash /tmp/miniconda.sh -b -p "${CONDA_DIR}"; \
         rm /tmp/miniconda.sh; \
     else \
