@@ -12,6 +12,14 @@ ARG CUDA_VERSION=12.1
 # doesn't default to an amd64 variant on arm64 hosts.
 FROM --platform=${TARGETPLATFORM} ${BASE_IMAGE}
 
+# Re-declare build args so they're available after the FROM instruction
+ARG BASE_IMAGE
+ARG TARGETPLATFORM
+ARG TARGETARCH
+ARG INSTALL_CUDA_TOOLKIT
+ARG CUDA_VERSION
+ARG CONDA_INSTALLER_URL
+
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib:/usr/local/cuda/lib64
 ENV CUDA_HOME=/usr/local/cuda
@@ -27,7 +35,7 @@ COPY MaskDINO/requirements.txt /workspace/MaskDINO-requirements.txt
 # Remove NVIDIA/CUDA apt lists (they cause NO_PUBKEY errors in some base images),
 # then install minimal packages.
 RUN set -eux; \
-    echo "Building on target platform: ${TARGETPLATFORM:-local} (${TARGETARCH:-unknown}) using base image: ${BASE_IMAGE}"; \
+    echo "Building on target platform: ${TARGETPLATFORM:-local} (${TARGETARCH:-unknown}) using base image: ${BASE_IMAGE:-unknown}"; \
     rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia* || true; \
     apt-get update && apt-get install -y --no-install-recommends \
         wget bzip2 ca-certificates libgl1 gnupg dirmngr git build-essential cmake python3-dev ninja-build \
