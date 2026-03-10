@@ -77,33 +77,8 @@ RUN set -eux; \
     echo "Upgrading pip/setuptools/wheel in maskdino env"; \
     ${CONDA_DIR}/bin/conda run -n maskdino pip install --upgrade pip setuptools wheel
 
-# Install CUDA-enabled PyTorch into the conda env so we have a GPU-capable torch
-RUN set -eux; \
-    echo "Installing CUDA-enabled PyTorch into maskdino env (no CPU-only fallback)"; \
-    # Try candidate CUDA versions in order: prefer requested ${CUDA_VERSION}, then fallback versions
-    CANDIDATES=("${CUDA_VERSION}" "13.0" "12.1"); \
-    success=0; \
-    for ver in "${CANDIDATES[@]}"; do \
-        case "${ver}" in \
-            13.1*) IDX="https://download.pytorch.org/whl/cu131" ;; \
-            13.0*) IDX="https://download.pytorch.org/whl/cu130" ;; \
-            12.1*) IDX="https://download.pytorch.org/whl/cu121" ;; \
-            *) IDX="https://download.pytorch.org/whl/cu131" ;; \
-        esac; \
-        echo "Trying PyTorch wheels for CUDA ${ver} (index ${IDX})"; \
-        if ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-deps --index-url "${IDX}" torch torchvision torchaudio; then \
-            echo "Successfully installed torch wheel for CUDA ${ver}"; success=1; break; \
-        fi; \
-        echo "pip wheel install failed for CUDA ${ver}; trying conda install"; \
-        if ${CONDA_DIR}/bin/conda run -n maskdino conda install -y -c pytorch -c nvidia pytorch torchvision torchaudio "pytorch-cuda=${ver}"; then \
-            echo "Successfully installed torch via conda for CUDA ${ver}"; success=1; break; \
-        fi; \
-        echo "Install failed for CUDA ${ver}, trying next candidate"; \
-    done; \
-    if [ "${success}" -ne 1 ]; then \
-        echo "ERROR: Could not install a CUDA-enabled PyTorch for any candidate CUDA versions (${CANDIDATES[*]}); refusing to install CPU-only torch"; \
-        exit 1; \
-    fi
+# Note: we postpone ensuring a CUDA-enabled PyTorch until after installing
+# repo requirements so that pip/requirements don't overwrite the GPU wheel.
 
 RUN set -eux; \
     echo "Installing opencv-python"; \
@@ -114,6 +89,34 @@ RUN set -eux; \
     ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-cache-dir -r /workspace/requirements.txt -r /workspace/MaskDINO-requirements.txt; \
     echo "Pinning pillow and scikit-image for compatibility"; \
     ${CONDA_DIR}/bin/conda run -n maskdino python -m pip install --no-cache-dir 'pillow==9.4.0' 'scikit-image==0.20.0'; \
+    \
+    # Reinstall a CUDA-enabled PyTorch wheel to ensure GPU-enabled torch is present
+    echo "Ensuring CUDA-enabled PyTorch (GPU) is installed to match torchvision"; \
+    CANDIDATES=("${CUDA_VERSION}" "13.0" "12.1"); \
+    TORCH_VERSION="2.2.0"; TV_VERSION="0.17.0"; TA_VERSION="2.2.0"; \
+    success=0; \
+    for ver in "${CANDIDATES[@]}"; do \
+        case "${ver}" in \
+            13.1*) IDX="https://download.pytorch.org/whl/cu131" ;; \
+            13.0*) IDX="https://download.pytorch.org/whl/cu130" ;; \
+            12.1*) IDX="https://download.pytorch.org/whl/cu121" ;; \
+            *) IDX="https://download.pytorch.org/whl/cu131" ;; \
+        esac; \
+        echo "Trying PyTorch wheels for CUDA ${ver} (index ${IDX})"; \
+        if ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-deps --force-reinstall --index-url "${IDX}" "torch==${TORCH_VERSION}" "torchvision==${TV_VERSION}" "torchaudio==${TA_VERSION}"; then \
+            echo "Successfully installed torch wheel for CUDA ${ver}"; success=1; break; \
+        fi; \
+        echo "pip wheel install failed for CUDA ${ver}; trying conda install"; \
+        if ${CONDA_DIR}/bin/conda run -n maskdino conda install -y -c pytorch -c nvidia pytorch==${TORCH_VERSION} torchvision==${TV_VERSION} torchaudio==${TA_VERSION} "pytorch-cuda=${ver}"; then \
+            echo "Successfully installed torch via conda for CUDA ${ver}"; success=1; break; \
+        fi; \
+        echo "Install failed for CUDA ${ver}, trying next candidate"; \
+    done; \
+    if [ "${success}" -ne 1 ]; then \
+        echo "ERROR: Could not install a CUDA-enabled PyTorch for any candidate CUDA versions (${CANDIDATES[*]}); refusing to continue"; \
+        exit 1; \
+    fi; \
+    \
     echo "Installing detectron2 from source to match PyTorch/CUDA"; \
     ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-cache-dir 'git+https://github.com/facebookresearch/detectron2.git'
 
@@ -138,7 +141,7 @@ RUN chmod +x /workspace/build_ops.sh
 # the container can build at runtime using /workspace/build_ops.sh.
 RUN set -eux; \
     echo "Attempting to compile CUDA ops at image build time (may fail)"; \
-    /workspace/build_ops.sh || echo "build_ops.sh failed during image build; will compile at runtime if needed"
+    ${CONDA_DIR}/bin/conda run -n maskdino bash -lc "/workspace/build_ops.sh" || echo "build_ops.sh failed during image build; will compile at runtime if needed"
 
 # Default command: run the MaskDINO demo script. Override with container args if needed.
 CMD ["/opt/conda/envs/maskdino/bin/python","MaskDINO/demo/demo.py","--config-file","/workspace/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"]
