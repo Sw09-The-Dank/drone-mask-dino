@@ -140,7 +140,8 @@ RUN chmod +x /workspace/build_ops.sh
 # the container can build at runtime using /workspace/build_ops.sh.
 RUN set -eux; \
     echo "Attempting to compile CUDA ops at image build time (may fail)"; \
-    ${CONDA_DIR}/bin/conda run -n maskdino bash -lc "/workspace/build_ops.sh" || echo "build_ops.sh failed during image build; will compile at runtime if needed"
+    # Ensure CUDA paths are exported inside the conda-run subshell so nvcc is visible
+    ${CONDA_DIR}/bin/conda run -n maskdino bash -lc "export CUDA_HOME=/usr/local/cuda && export PATH=/usr/local/cuda/bin:$PATH && /workspace/build_ops.sh" || echo "build_ops.sh failed during image build; will compile at runtime if needed"
 
 # Default command: run the MaskDINO demo script. Override with container args if needed.
 CMD ["/opt/conda/envs/maskdino/bin/python","MaskDINO/demo/demo.py","--config-file","/workspace/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"]
