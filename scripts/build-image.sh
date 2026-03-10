@@ -28,6 +28,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --platform) PLATFORM="$2"; shift 2;;
     --base) BASE_IMAGE="$2"; shift 2;;
+    --native) FORCE_NATIVE=1; shift 1;;
     --tag) IMAGE_TAG="$2"; shift 2;;
     --no-cache) NO_CACHE=1; shift 1;;
     -h|--help) usage; exit 0;;
@@ -60,14 +61,14 @@ case "$host_uname" in
 esac
 
 # Create tmp with explicit FROM line. Use --platform only when cross-building.
-if [ "$PLATFORM" = "$host_platform" ]; then
+if [ "${FORCE_NATIVE:-0}" = "1" ] || [ "$PLATFORM" = "$host_platform" ]; then
   printf "FROM %s\n" "$BASE_IMAGE" > "$tmp_dockerfile"
 else
   printf "FROM --platform=%s %s\n" "$PLATFORM" "$BASE_IMAGE" > "$tmp_dockerfile"
 fi
 awk 'found==0 && /^FROM /{found=1; next} found==1{print}' "$orig_dockerfile" >> "$tmp_dockerfile"
 
-if [ "$PLATFORM" = "$host_platform" ]; then
+if [ "${FORCE_NATIVE:-0}" = "1" ] || [ "$PLATFORM" = "$host_platform" ]; then
   BUILD_CMD=(docker build --pull --progress=plain -t "$IMAGE_TAG" -f "$tmp_dockerfile" .)
 else
   BUILD_CMD=(docker buildx build --platform "$PLATFORM" --pull --progress=plain -t "$IMAGE_TAG" -f "$tmp_dockerfile" .)

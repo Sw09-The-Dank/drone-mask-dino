@@ -6,7 +6,7 @@ build-amd64:
 
 build-dgx:
 	# DGX systems are amd64 with NVIDIA GPUs; build an amd64 CUDA image locally
-	./scripts/build-image.sh --platform linux/amd64 --base pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel --tag maskdino-demo:dgx
+	./scripts/build-image.sh --native --base pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel --tag maskdino-demo:dgx
 
 build-arm64-cpu:
 	./scripts/build-image.sh --platform linux/arm64 --base pytorch/pytorch:2.1.0-cpu --tag maskdino-demo:arm64-cpu
