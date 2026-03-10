@@ -16,7 +16,8 @@ COPY MaskDINO/requirements.txt /workspace/MaskDINO-requirements.txt
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
         build-essential ca-certificates git wget curl pkg-config cmake \
-        libglib2.0-0 libsm6 libxrender1 libxext6 libhdf5-dev libjpeg-dev zlib1g-dev unzip && \
+        libglib2.0-0 libsm6 libxrender1 libxext6 libhdf5-dev libjpeg-dev zlib1g-dev unzip \
+        libgl1-mesa-glx libgl1 && \
     rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip and install Python requirements via pip
