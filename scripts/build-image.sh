@@ -42,6 +42,14 @@ fi
 
 echo "Generating temporary Dockerfile using base image: ${BASE_IMAGE} for ${PLATFORM}"
 
+# Quick check: ensure the requested base image has metadata (manifests) for the registry
+if ! docker buildx imagetools inspect "$BASE_IMAGE" >/dev/null 2>&1; then
+  echo "ERROR: unable to find metadata for base image: $BASE_IMAGE" >&2
+  echo "Run 'docker buildx imagetools inspect $BASE_IMAGE' to view available manifests and platforms." >&2
+  echo "If the image has no arm64 variant, choose a different base (vendor aarch64/CUDA image for Jetson) or use an Ubuntu base and install PyTorch for aarch64." >&2
+  exit 3
+fi
+
 # Create tmp with explicit FROM and append everything after the first FROM in original
 printf "FROM --platform=%s %s\n" "$PLATFORM" "$BASE_IMAGE" > "$tmp_dockerfile"
 awk 'found==0 && /^FROM /{found=1; next} found==1{print}' "$orig_dockerfile" >> "$tmp_dockerfile"
