@@ -20,7 +20,7 @@ EOF
 }
 
 PLATFORM=linux/amd64
-BASE_IMAGE=pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel
+BASE_IMAGE=nvidia/cuda:12.1.0-devel-ubuntu22.04
 IMAGE_TAG=maskdino-demo:local
 NO_CACHE=0
 NO_CACHE=0
@@ -47,9 +47,15 @@ echo "Generating temporary Dockerfile using base image: ${BASE_IMAGE} for ${PLAT
 # Auto-fallback: if target is arm64 and user selected a CUDA/amd64 base, switch
 # to a multi-arch Ubuntu base to avoid pulling an incompatible amd64 CUDA image.
 if echo "$PLATFORM" | grep -q "arm64" && echo "$BASE_IMAGE" | grep -Ei "cuda|cudnn|nvidia|pytorch.*cuda" >/dev/null 2>&1; then
-  echo "Target is arm64 but requested CUDA base image may be amd64; switching base to ubuntu:22.04 as a fallback." >&2
-  BASE_IMAGE=ubuntu:22.04
-  echo "You should install PyTorch/conda in the resulting image for aarch64 or provide a vendor aarch64 CUDA image via --base." >&2
+  # If the user provided an explicit ARM64 CUDA base via ARM64_CUDA_BASE, prefer it.
+  if [ -n "${ARM64_CUDA_BASE:-}" ]; then
+    echo "Target is arm64 and ARM64_CUDA_BASE is set; using ${ARM64_CUDA_BASE} as base image." >&2
+    BASE_IMAGE=${ARM64_CUDA_BASE}
+  else
+    echo "Target is arm64 but requested CUDA base image may be amd64; switching base to ubuntu:22.04 as a fallback." >&2
+    BASE_IMAGE=ubuntu:22.04
+    echo "You should install PyTorch/conda in the resulting image for aarch64 or provide a vendor aarch64 CUDA image via --base or ARM64_CUDA_BASE." >&2
+  fi
 fi
 
 # Quick check: if buildx imagetools is available, warn when metadata is missing
