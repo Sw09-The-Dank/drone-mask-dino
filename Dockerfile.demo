@@ -24,6 +24,13 @@ RUN set -eux; \
         fi; \
     else \
         echo "Skipping CUDA op build (BUILD_OPS=${BUILD_OPS})"; \
+    fi; \
+    mkdir -p /built_ops; \
+    if [ -d maskdino/modeling/pixel_decoder/ops ]; then \
+        cp -a maskdino/modeling/pixel_decoder/ops/*.so /built_ops/ 2>/dev/null || true; \
+    fi; \
+    if [ -d MaskDINO/maskdino/modeling/pixel_decoder/ops ]; then \
+        cp -a MaskDINO/maskdino/modeling/pixel_decoder/ops/*.so /built_ops/ 2>/dev/null || true; \
     fi
 
 FROM ${BASE_IMAGE}
@@ -56,7 +63,7 @@ RUN set -eux; \
 COPY . /workspace
 
 ## Copy compiled CUDA ops from builder stage into final workspace (if any)
-COPY --from=builder /workspace/maskdino/modeling/pixel_decoder/ops /workspace/maskdino/modeling/pixel_decoder/ops_built || true
+COPY --from=builder /built_ops /workspace/maskdino/modeling/pixel_decoder/ops_built || true
 RUN set -eux; \
     if [ -d /workspace/maskdino/modeling/pixel_decoder/ops_built ]; then \
         cp -a /workspace/maskdino/modeling/pixel_decoder/ops_built/* /workspace/maskdino/modeling/pixel_decoder/ops/ || true; \
