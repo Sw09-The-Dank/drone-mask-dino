@@ -2,37 +2,6 @@
 # Installs CUDA-enabled PyTorch from the base image and uses pip for requirements
 
 ARG BASE_IMAGE=pytorch/pytorch:2.2.0-cuda11.8-cudnn8-runtime
-ARG BUILD_OPS=0
-
-# Builder stage: optional compilation of CUDA ops (runs when BUILD_OPS=1)
-FROM pytorch/pytorch:2.2.0-cuda11.8-cudnn8-devel AS builder
-ARG BUILD_OPS
-WORKDIR /workspace
-RUN set -eux; \
-    apt-get update && apt-get install -y --no-install-recommends build-essential git wget curl python3-dev python3-pip cmake pkg-config && rm -rf /var/lib/apt/lists/*
-
-# Copy repository and compile ops if requested
-COPY . /workspace
-RUN set -eux; \
-    if [ "${BUILD_OPS}" = "1" ]; then \
-        if [ -d maskdino/modeling/pixel_decoder/ops ]; then \
-            cd maskdino/modeling/pixel_decoder/ops && TORCH_CUDA_ARCH_LIST="8.6;8.0;7.5" FORCE_CUDA=1 sh make.sh; \
-        elif [ -d MaskDINO/maskdino/modeling/pixel_decoder/ops ]; then \
-            cd MaskDINO/maskdino/modeling/pixel_decoder/ops && TORCH_CUDA_ARCH_LIST="8.6;8.0;7.5" FORCE_CUDA=1 sh make.sh; \
-        else \
-            echo "No ops directory found at maskdino/... or MaskDINO/maskdino/... -- skipping"; \
-        fi; \
-    else \
-        echo "Skipping CUDA op build (BUILD_OPS=${BUILD_OPS})"; \
-    fi; \
-    mkdir -p /built_ops; \
-    if [ -d maskdino/modeling/pixel_decoder/ops ]; then \
-        cp -a maskdino/modeling/pixel_decoder/ops/*.so /built_ops/ 2>/dev/null || true; \
-    fi; \
-    if [ -d MaskDINO/maskdino/modeling/pixel_decoder/ops ]; then \
-        cp -a MaskDINO/maskdino/modeling/pixel_decoder/ops/*.so /built_ops/ 2>/dev/null || true; \
-    fi
-
 FROM ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -62,12 +31,7 @@ RUN set -eux; \
 # Copy repository into image (demo expects MaskDINO/ and configs present)
 COPY . /workspace
 
-## Copy compiled CUDA ops from builder stage into final workspace (if any)
-COPY --from=builder /built_ops /workspace/maskdino/modeling/pixel_decoder/ops_built || true
-RUN set -eux; \
-    if [ -d /workspace/maskdino/modeling/pixel_decoder/ops_built ]; then \
-        cp -a /workspace/maskdino/modeling/pixel_decoder/ops_built/* /workspace/maskdino/modeling/pixel_decoder/ops/ || true; \
-    fi
+## Compiled CUDA ops should be built at runtime with `/workspace/build_ops.sh` if needed
 
 # Make the provided helper executable
 COPY build_ops.sh /workspace/build_ops.sh
