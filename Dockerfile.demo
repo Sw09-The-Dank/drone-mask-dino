@@ -86,26 +86,13 @@ RUN set -eux; \
 # torch and do not replace it later.
 RUN set -eux; \
     echo "Installing CUDA-enabled PyTorch (GPU) into maskdino env"; \
-    # Prefer known-working wheel for manylinux aarch64 (cu130), then fall back
-    CANDIDATES=("13.0" "${CUDA_VERSION}" "12.1"); \
-    TORCH_VERSION="1.9.0"; TV_VERSION="0.10.0"; TA_VERSION="2.2.0"; \
-    success=0; \
-    for ver in "${CANDIDATES[@]}"; do \
-        case "${ver}" in \
-            13.1*) IDX="https://download.pytorch.org/whl/cu131" ;; \
-            13.0*) IDX="https://download.pytorch.org/whl/cu130" ;; \
-            12.1*) IDX="https://download.pytorch.org/whl/cu121" ;; \
-            *) IDX="https://download.pytorch.org/whl/cu131" ;; \
-        esac; \
-        echo "Trying PyTorch wheels for CUDA ${ver} (index ${IDX})"; \
-        if ${CONDA_DIR}/bin/conda run -n maskdino conda install -y -c pytorch -c nvidia pytorch==1.9.0 torchvision==0.10.0 cudatoolkit=11.1; then \
-            echo "Successfully installed torch wheel for CUDA ${ver}"; success=1; break; \
-        fi; \
-        echo "pip wheel install failed for CUDA ${ver}, trying next candidate"; \
-    done; \
-    if [ "${success}" -ne 1 ]; then \
-        echo "ERROR: Could not install a CUDA-enabled PyTorch for any candidate CUDA versions (${CANDIDATES[*]}); refusing to continue"; \
-        exit 1; \
+    if [ "${TARGETARCH:-}" = "arm64" ]; then \
+        echo "Detected arm64: installing wheel-based PyTorch (cu130) via pip"; \
+        ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-deps --index-url https://download.pytorch.org/whl/cu130 \ \
+            "torch==2.0.1" "torchvision==0.17.0" "torchaudio==2.2.0" || (echo "pip install of torch wheel failed" && exit 1); \
+    else \
+        echo "Detected x86_64: installing with conda using MaskDINO recommended versions"; \
+        ${CONDA_DIR}/bin/conda run -n maskdino conda install -y -c pytorch -c nvidia pytorch==1.9.0 torchvision==0.10.0 cudatoolkit=11.1 || (echo "conda install of torch failed" && exit 1); \
     fi
 
 # Note: we postpone ensuring a CUDA-enabled PyTorch until after installing
