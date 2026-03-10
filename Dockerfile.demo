@@ -2,6 +2,23 @@
 # Installs CUDA-enabled PyTorch from the base image and uses pip for requirements
 
 ARG BASE_IMAGE=pytorch/pytorch:2.2.0-cuda11.8-cudnn8-runtime
+ARG BUILD_OPS=0
+
+# Builder stage: optional compilation of CUDA ops (runs when BUILD_OPS=1)
+FROM pytorch/pytorch:2.2.0-cuda11.8-cudnn8-devel AS builder
+WORKDIR /workspace
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends build-essential git wget curl python3-dev python3-pip cmake pkg-config && rm -rf /var/lib/apt/lists/*
+
+# Copy repository and compile ops if requested
+COPY . /workspace
+RUN set -eux; \
+    if [ "${BUILD_OPS}" = "1" ]; then \
+        cd maskdino/modeling/pixel_decoder/ops && sh make.sh; \
+    else \
+        echo "Skipping CUDA op build (BUILD_OPS=${BUILD_OPS})"; \
+    fi
+
 FROM ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
