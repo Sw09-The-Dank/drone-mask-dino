@@ -152,6 +152,24 @@ make build-arm64-cpu   # CPU image for arm64
 make build-arm64-gpu   # placeholder target (set base image for your device)
 ```
 
+**DGX systems (NVIDIA DGX / Spark)**
+
+- On DGX hosts (amd64 with NVIDIA GPUs) build the amd64 CUDA image locally — you don't need arm64. Example:
+
+```bash
+make build-dgx
+# or
+./scripts/build-image.sh --platform linux/amd64 \
+    --base pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel \
+    --tag maskdino-demo:dgx
+```
+
+- Run on DGX with GPU passthrough:
+
+```bash
+docker run --gpus all --rm -it -v "$PWD":/workspace maskdino-demo:dgx /bin/bash
+```
+
 - **Run (GPU):** Use a machine with NVIDIA drivers and Docker Desktop/WSL2 or Linux with `nvidia-container-toolkit`:
 
 ```bash
