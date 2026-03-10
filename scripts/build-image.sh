@@ -74,8 +74,8 @@ printf "ARG TARGETPLATFORM\nARG TARGETARCH\nARG BASE_IMAGE=%s\n" "$BASE_IMAGE" >
 awk 'found==0 && /^FROM /{found=1; next} found==1{print}' "$orig_dockerfile" >> "$tmp_dockerfile"
 
 if [ "${FORCE_NATIVE:-0}" = "1" ] || [ "$PLATFORM" = "$host_platform" ]; then
-  # Use --platform with docker build to ensure the daemon pulls the correct image
-  BUILD_CMD=(docker build --platform "$PLATFORM" --pull --progress=plain -t "$IMAGE_TAG" -f "$tmp_dockerfile" .)
+  # Use plain docker build (no --platform) when building natively to avoid emulation issues
+  BUILD_CMD=(docker build --pull --progress=plain -t "$IMAGE_TAG" -f "$tmp_dockerfile" .)
 else
   BUILD_CMD=(docker buildx build --platform "$PLATFORM" --pull --progress=plain -t "$IMAGE_TAG" -f "$tmp_dockerfile" .)
 fi
