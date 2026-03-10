@@ -27,7 +27,8 @@ RUN set -eux; \
     echo "Building on target platform: ${TARGETPLATFORM} (${TARGETARCH}) using base image: ${BASE_IMAGE}"; \
     rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia* || true; \
     apt-get update && apt-get install -y --no-install-recommends \
-        wget bzip2 ca-certificates libgl1 gnupg dirmngr git build-essential cmake python3-dev ninja-build && rm -rf /var/lib/apt/lists/*
+        wget bzip2 ca-certificates libgl1 gnupg dirmngr git build-essential cmake python3-dev ninja-build \
+        pkg-config libhdf5-dev && rm -rf /var/lib/apt/lists/*
 
 # Install Miniconda (skip if already present in base image)
 ENV CONDA_DIR=/opt/conda
