@@ -6,12 +6,15 @@ ARG TARGETPLATFORM
 ARG TARGETARCH
 # Allow overriding the Miniconda installer for different CPU architectures
 ARG CONDA_INSTALLER_URL=https://repo.anaconda.com/miniconda/Miniconda3-py38_4.9.2-Linux-x86_64.sh
+ARG INSTALL_CUDA_TOOLKIT=0
+ARG CUDA_VERSION=12.1
 # Ensure the base image is pulled for the requested target platform so buildx
 # doesn't default to an amd64 variant on arm64 hosts.
 FROM --platform=${TARGETPLATFORM} ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib:/usr/local/cuda/lib64
+ENV CUDA_HOME=/usr/local/cuda
 ENV TORCH_CUDA_ARCH_LIST="12.0;12.1+PTX;8.6;8.0;7.5"
 SHELL ["/bin/bash", "-lc"]
 WORKDIR /workspace
@@ -28,7 +31,15 @@ RUN set -eux; \
     rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia* || true; \
     apt-get update && apt-get install -y --no-install-recommends \
         wget bzip2 ca-certificates libgl1 gnupg dirmngr git build-essential cmake python3-dev ninja-build \
-        pkg-config libhdf5-dev && rm -rf /var/lib/apt/lists/*
+        pkg-config libhdf5-dev && \
+    if [ "${INSTALL_CUDA_TOOLKIT}" = "1" ] && [ "${TARGETARCH}" = "arm64" ]; then \
+        echo "Installing CUDA toolkit ${CUDA_VERSION} for arm64"; \
+        wget -qO /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/aarch64/cuda-keyring_1.0-1_all.deb; \
+        dpkg -i /tmp/cuda-keyring.deb; \
+        rm -f /tmp/cuda-keyring.deb; \
+        apt-get update && apt-get install -y --no-install-recommends cuda-toolkit-$(echo ${CUDA_VERSION} | tr '.' '-'); \
+    fi; \
+    rm -rf /var/lib/apt/lists/*
 
 # Install Miniconda (skip if already present in base image)
 ENV CONDA_DIR=/opt/conda
