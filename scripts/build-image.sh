@@ -52,9 +52,11 @@ if echo "$PLATFORM" | grep -q "arm64" && echo "$BASE_IMAGE" | grep -Ei "cuda|cud
     echo "Target is arm64 and ARM64_CUDA_BASE is set; using ${ARM64_CUDA_BASE} as base image." >&2
     BASE_IMAGE=${ARM64_CUDA_BASE}
   else
-    echo "Target is arm64 but requested CUDA base image may be amd64; switching base to ubuntu:22.04 as a fallback." >&2
-    BASE_IMAGE=ubuntu:22.04
-    echo "You should install PyTorch/conda in the resulting image for aarch64 or provide a vendor aarch64 CUDA image via --base or ARM64_CUDA_BASE." >&2
+    echo "Target is arm64 but requested CUDA base image may be amd64; switching base to an official multi-arch NVIDIA CUDA devel image as a fallback." >&2
+    # Use a public NVIDIA CUDA devel image (multi-arch on Docker Hub) that provides CUDA toolkit for aarch64
+    BASE_IMAGE=nvidia/cuda:13.1.1-devel-ubuntu24.04
+    echo "If this image doesn't match your host drivers, you can override with --base or ARM64_CUDA_BASE." >&2
+    echo "You should still install or verify PyTorch/conda in the resulting image for aarch64 if needed." >&2
   fi
 fi
 
