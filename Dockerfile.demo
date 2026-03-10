@@ -40,7 +40,7 @@ RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
         wget bzip2 ca-certificates libgl1 gnupg dirmngr git build-essential cmake python3-dev ninja-build \
         pkg-config libhdf5-dev && \
-    if [ "${INSTALL_CUDA_TOOLKIT}" = "1" ] && [ "${TARGETARCH:-}" = "arm64" ]; then \
+    if [ "${INSTALL_CUDA_TOOLKIT:-0}" = "1" ] && [ "${TARGETARCH:-}" = "arm64" ]; then \
         echo "Installing CUDA toolkit ${CUDA_VERSION} for arm64"; \
         wget -qO /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/aarch64/cuda-keyring_1.0-1_all.deb; \
         dpkg -i /tmp/cuda-keyring.deb; \
