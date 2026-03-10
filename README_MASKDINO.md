@@ -118,8 +118,19 @@ docker buildx build --platform linux/amd64 \
 
 ```bash
 docker buildx build --platform linux/arm64 \
-    --build-arg BASE_IMAGE=pytorch/pytorch:2.1.0-cpu \
+    --build-arg BASE_IMAGE=ubuntu:22.04 \
     -t maskdino-demo:local -f Dockerfile.demo .
+```
+
+Note: the Dockerfile helper will automatically switch to a Ubuntu fallback when an arm64 target is requested but a CUDA/amd64 base image is selected. After building the Ubuntu-based image you should install Miniconda and an aarch64-compatible PyTorch build inside the container (or provide a vendor-provided aarch64 CUDA image via `--base`). Example inside the container:
+
+```bash
+# inside container
+apt-get update && apt-get install -y wget bzip2
+wget -qO /tmp/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-py38_4.9.2-Linux-aarch64.sh
+bash /tmp/miniconda.sh -b -p /opt/conda
+/opt/conda/bin/conda create -y -n maskdino python=3.8
+/opt/conda/bin/conda run -n maskdino pip install torch torchvision --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
 - arm64 host with NVIDIA GPU (example): replace `BASE_IMAGE` with a matching aarch64/CUDA image provided by your platform (Jetson/L4T, NVIDIA NGC, or a distro-specific image). Example placeholder — replace with the exact tag for your device:

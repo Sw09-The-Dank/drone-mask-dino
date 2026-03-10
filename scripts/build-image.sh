@@ -23,6 +23,7 @@ PLATFORM=linux/amd64
 BASE_IMAGE=pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel
 IMAGE_TAG=maskdino-demo:local
 NO_CACHE=0
+NO_CACHE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,6 +43,14 @@ if [ ! -f "$orig_dockerfile" ]; then
 fi
 
 echo "Generating temporary Dockerfile using base image: ${BASE_IMAGE} for ${PLATFORM}"
+
+# Auto-fallback: if target is arm64 and user selected a CUDA/amd64 base, switch
+# to a multi-arch Ubuntu base to avoid pulling an incompatible amd64 CUDA image.
+if echo "$PLATFORM" | grep -q "arm64" && echo "$BASE_IMAGE" | grep -Ei "cuda|cudnn|nvidia|pytorch.*cuda" >/dev/null 2>&1; then
+  echo "Target is arm64 but requested CUDA base image may be amd64; switching base to ubuntu:22.04 as a fallback." >&2
+  BASE_IMAGE=ubuntu:22.04
+  echo "You should install PyTorch/conda in the resulting image for aarch64 or provide a vendor aarch64 CUDA image via --base." >&2
+fi
 
 # Quick check: if buildx imagetools is available, warn when metadata is missing
 if command -v docker >/dev/null 2>&1 && docker buildx >/dev/null 2>&1; then
