@@ -1,4 +1,12 @@
-FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel
+# Allow selecting the base image at build time so the Dockerfile works
+# on different host architectures (amd64 for CUDA GPU images, arm64/CPU
+# images for non-GPU platforms). Override with `--build-arg BASE_IMAGE=...`.
+ARG BASE_IMAGE=pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel
+ARG TARGETPLATFORM
+ARG TARGETARCH
+# Ensure the base image is pulled for the requested target platform so buildx
+# doesn't default to an amd64 variant on arm64 hosts.
+FROM --platform=${TARGETPLATFORM} ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib:$LD_LIBRARY_PATH
@@ -14,6 +22,7 @@ COPY MaskDINO/requirements.txt /workspace/MaskDINO-requirements.txt
 # Remove NVIDIA/CUDA apt lists (they cause NO_PUBKEY errors in some base images),
 # then install minimal packages.
 RUN set -eux; \
+    echo "Building on target platform: ${TARGETPLATFORM} (${TARGETARCH}) using base image: ${BASE_IMAGE}"; \
     rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia* || true; \
     apt-get update && apt-get install -y --no-install-recommends \
         wget bzip2 ca-certificates libgl1 gnupg dirmngr git build-essential cmake python3-dev ninja-build && rm -rf /var/lib/apt/lists/*

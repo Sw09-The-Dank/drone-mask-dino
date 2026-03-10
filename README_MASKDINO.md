@@ -91,3 +91,75 @@ python train_mask.py   -c MaskDINO/configs/coco/instance-segmentation/maskdino_R
 - If detectron2 fails to install from source, run the install commands manually inside the container so you can inspect errors.
 
 If you'd like, I can add an example config-to-opts mapping, a sample minimal dataset config, or a full reproducible CI-friendly Dockerfile. What should I add next?
+
+**Multi-platform builds**
+
+- **Overview:** CUDA-enabled PyTorch images with GPU support are generally provided for `linux/amd64`. On `arm64` hosts (including Apple Silicon) you typically need a CPU-only base image or must build amd64 images via emulation/cross-build. The `Dockerfile.demo` now accepts a build-arg `BASE_IMAGE` so you can pick the appropriate base image for your platform.
+
+- **Build (native/default):**
+
+```bash
+docker build -f Dockerfile.demo -t maskdino-demo:local .
+```
+
+- **Build for amd64 (recommended for GPU images) using Buildx:**
+
+```bash
+docker buildx build --platform linux/amd64 \
+    --build-arg BASE_IMAGE=pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel \
+    -t maskdino-demo:local -f Dockerfile.demo .
+```
+
+- **Build for arm64 (CPU-only) using Buildx:**
+
+- **Build for arm64 (CPU-only or arm64-GPU) using Buildx:**
+
+- CPU-only example:
+
+```bash
+docker buildx build --platform linux/arm64 \
+    --build-arg BASE_IMAGE=pytorch/pytorch:2.1.0-cpu \
+    -t maskdino-demo:local -f Dockerfile.demo .
+```
+
+- arm64 host with NVIDIA GPU (example): replace `BASE_IMAGE` with a matching aarch64/CUDA image provided by your platform (Jetson/L4T, NVIDIA NGC, or a distro-specific image). Example placeholder — replace with the exact tag for your device:
+
+```bash
+docker buildx build --platform linux/arm64 \
+    --build-arg BASE_IMAGE=<your-aarch64-cuda-image> \
+    -t maskdino-demo:local -f Dockerfile.demo .
+```
+
+- **Guidance:**
+    - If your arm64 machine has an NVIDIA GPU (for example, Jetson devices), you must use a CUDA-enabled aarch64 base image that matches the device's CUDA/JetPack version; generic amd64 CUDA images will not provide GPU passthrough on arm64 hosts. 
+    - If no suitable aarch64 CUDA image exists for your platform, consider building from source on the target device or using a vendor-provided container image.
+
+**Build helper (recommended)**
+
+If your builder or buildx setup still resolves the wrong platform variant when using `ARG` in the `FROM` line, use the included helper script which generates a temporary Dockerfile with an explicit `FROM --platform=... <image>` line. This avoids ambiguous resolution and matches the exact image you want to pull.
+
+Basic usage:
+
+```bash
+./scripts/build-image.sh --platform linux/arm64 --base pytorch/pytorch:2.1.0-cpu --tag maskdino-demo:local
+```
+
+Or use the provided `Makefile` targets:
+
+```bash
+make build-amd64       # GPU image for amd64
+make build-arm64-cpu   # CPU image for arm64
+make build-arm64-gpu   # placeholder target (set base image for your device)
+```
+
+- **Run (GPU):** Use a machine with NVIDIA drivers and Docker Desktop/WSL2 or Linux with `nvidia-container-toolkit`:
+
+```bash
+docker run --gpus all --rm -it -v "$PWD":/workspace maskdino-demo:local /bin/bash
+```
+
+- **Run (CPU-only / arm64):** Omit `--gpus all` and use the CPU image you built.
+
+- **Notes:**
+    - Building an amd64 CUDA image on an arm64 host requires QEMU-based emulation or cross-building with `docker buildx`; running that amd64 container with GPU passthrough typically only works on Linux hosts with matching NVIDIA drivers. 
+    - If you need, I can add a small Makefile or Windows PowerShell helper to simplify common build targets.
