@@ -1,4 +1,4 @@
-.# Makefile for building the demo image with convenient targets
+# Makefile for building the demo image with convenient targets
 .PHONY: build-amd64 build-arm64-cpu build-arm64-gpu
 
 build-amd64:
