@@ -15,7 +15,13 @@ RUN set -eux; \
 COPY . /workspace
 RUN set -eux; \
     if [ "${BUILD_OPS}" = "1" ]; then \
-        cd maskdino/modeling/pixel_decoder/ops && sh make.sh; \
+        if [ -d maskdino/modeling/pixel_decoder/ops ]; then \
+            cd maskdino/modeling/pixel_decoder/ops && sh make.sh; \
+        elif [ -d MaskDINO/maskdino/modeling/pixel_decoder/ops ]; then \
+            cd MaskDINO/maskdino/modeling/pixel_decoder/ops && sh make.sh; \
+        else \
+            echo "No ops directory found at maskdino/... or MaskDINO/maskdino/... -- skipping"; \
+        fi; \
     else \
         echo "Skipping CUDA op build (BUILD_OPS=${BUILD_OPS})"; \
     fi
