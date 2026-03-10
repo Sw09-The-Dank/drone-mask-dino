@@ -1,13 +1,13 @@
 # Allow selecting the base image at build time so the Dockerfile works
 # on different host architectures (amd64 for CUDA GPU images, arm64/CPU
 # images for non-GPU platforms). Override with `--build-arg BASE_IMAGE=...`.
-ARG BASE_IMAGE=nvidia/cuda:12.1.0-devel-ubuntu22.04
+ARG BASE_IMAGE=nvidia/cuda:13.1.1-devel-ubuntu22.04
 ARG TARGETPLATFORM
 ARG TARGETARCH
 # Allow overriding the Miniconda installer for different CPU architectures
 ARG CONDA_INSTALLER_URL=https://repo.anaconda.com/miniconda/Miniconda3-py38_4.9.2-Linux-x86_64.sh
 ARG INSTALL_CUDA_TOOLKIT=0
-ARG CUDA_VERSION=12.1
+ARG CUDA_VERSION=13.1
 # Ensure the base image is pulled for the requested target platform so buildx
 # doesn't default to an amd64 variant on arm64 hosts.
 FROM --platform=${TARGETPLATFORM} ${BASE_IMAGE}
@@ -23,7 +23,7 @@ ARG CONDA_INSTALLER_URL
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib:/usr/local/cuda/lib64
 ENV CUDA_HOME=/usr/local/cuda
-ENV TORCH_CUDA_ARCH_LIST="12.0;12.1+PTX;8.6;8.0;7.5"
+ENV TORCH_CUDA_ARCH_LIST="13.0;12.1+PTX;8.6;8.0;7.5"
 SHELL ["/bin/bash", "-lc"]
 WORKDIR /workspace
 
@@ -79,10 +79,10 @@ RUN set -eux; \
 
 # Install CUDA-enabled PyTorch into the conda env so we have a GPU-capable torch
 RUN set -eux; \
-    echo "Installing CUDA-enabled PyTorch (pytorch-cuda=12.1) into maskdino env"; \
-    ${CONDA_DIR}/bin/conda run -n maskdino conda install -y -c pytorch -c nvidia pytorch torchvision torchaudio pytorch-cuda=12.1 || \
+    echo "Installing CUDA-enabled PyTorch (pytorch-cuda=13.1) into maskdino env"; \
+    ${CONDA_DIR}/bin/conda run -n maskdino conda install -y -c pytorch -c nvidia pytorch torchvision torchaudio pytorch-cuda=13.1 || \
     (echo "conda install failed; falling back to pip+wheel from pytorch extra index"; \
-     ${CONDA_DIR}/bin/conda run -n maskdino pip install --extra-index-url https://download.pytorch.org/whl/cu121 torch torchvision torchaudio)
+     ${CONDA_DIR}/bin/conda run -n maskdino pip install --extra-index-url https://download.pytorch.org/whl/cu131 torch torchvision torchaudio)
 
 RUN set -eux; \
     echo "Installing opencv-python"; \

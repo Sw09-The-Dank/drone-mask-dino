@@ -20,7 +20,7 @@ EOF
 }
 
 PLATFORM=linux/amd64
-BASE_IMAGE=nvidia/cuda:12.1.0-devel-ubuntu22.04
+BASE_IMAGE=nvidia/cuda:13.0.0-devel-ubuntu22.04
 IMAGE_TAG=maskdino-demo:local
 NO_CACHE=0
 NO_CACHE=0
