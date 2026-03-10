@@ -1,3 +1,73 @@
+# Minimal CUDA-enabled Dockerfile for running MaskDINO (demo)
+# Dependencies are installed from: INSTALL.md, requirements.txt, and MaskDINO/requirements.txt
+
+ARG BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
+FROM ${BASE_IMAGE}
+
+ARG CONDA_INSTALLER_URL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CONDA_DIR=/opt/conda
+SHELL ["/bin/bash", "-lc"]
+WORKDIR /workspace
+
+# Copy requirements early to leverage Docker layer caching
+COPY requirements.txt /workspace/requirements.txt
+COPY MaskDINO/requirements.txt /workspace/MaskDINO-requirements.txt
+
+# Install minimal system dependencies referenced by INSTALL.md and for building packages
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates git wget curl pkg-config cmake \
+        libglib2.0-0 libsm6 libxrender1 libxext6 libhdf5-dev unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Miniconda
+RUN set -eux; \
+    wget -qO /tmp/miniconda.sh "${CONDA_INSTALLER_URL}"; \
+    bash /tmp/miniconda.sh -b -p "${CONDA_DIR}"; \
+    rm /tmp/miniconda.sh; \
+    "${CONDA_DIR}/bin/conda" clean -afy
+
+ENV PATH=${CONDA_DIR}/bin:${PATH}
+
+# Create conda environment and install CUDA-enabled PyTorch (via conda) so wheels match CUDA
+RUN set -eux; \
+    conda create -y -n maskdino python=3.8; \
+    # Install PyTorch with CUDA support (adjust pytorch-cuda version as needed)
+    conda install -y -n maskdino -c pytorch -c nvidia pytorch torchvision torchaudio pytorch-cuda=11.8; \
+    conda clean -afy
+
+# Install Python deps from the project's requirements files into the conda env
+RUN set -eux; \
+    conda run -n maskdino pip install --upgrade pip; \
+    conda run -n maskdino pip install -r /workspace/requirements.txt || true; \
+    conda run -n maskdino pip install -r /workspace/MaskDINO-requirements.txt || true
+
+# Install detectron2 as recommended in INSTALL.md (editable install from source)
+RUN set -eux; \
+    git clone --depth 1 https://github.com/facebookresearch/detectron2.git /workspace/detectron2 || true; \
+    conda run -n maskdino pip install -e /workspace/detectron2 || true; \
+    # Common extras used by MaskDINO demos
+    conda run -n maskdino pip install git+https://github.com/cocodataset/panopticapi.git || true; \
+    conda run -n maskdino pip install git+https://github.com/mcordts/cityscapesScripts.git || true
+
+# Copy repository into image (demo expects MaskDINO/ and configs present)
+COPY . /workspace
+
+# Make the provided helper executable
+COPY build_ops.sh /workspace/build_ops.sh
+RUN chmod +x /workspace/build_ops.sh || true
+
+# Note: building CUDA extensions (MSDeformAttn) may need to be run inside the
+# container where the host CUDA toolkit is available. To compile at runtime:
+#    /workspace/build_ops.sh
+
+# Use the conda env Python by default
+ENV PATH=${CONDA_DIR}/envs/maskdino/bin:${PATH}
+ENV CONDA_DEFAULT_ENV=maskdino
+
+# Default command runs the demo; override as needed
+CMD ["/opt/conda/envs/maskdino/bin/python","MaskDINO/demo/demo.py","--config-file","/workspace/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"]
 # Allow selecting the base image at build time so the Dockerfile works
 # on different host architectures (amd64 for CUDA GPU images, arm64/CPU
 # images for non-GPU platforms). Override with `--build-arg BASE_IMAGE=...`.
