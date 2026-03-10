@@ -41,12 +41,17 @@ RUN set -eux; \
         wget bzip2 ca-certificates libgl1 gnupg dirmngr git build-essential cmake python3-dev ninja-build \
         pkg-config libhdf5-dev && \
     if [ "${INSTALL_CUDA_TOOLKIT:-0}" = "1" ] && [ "${TARGETARCH:-}" = "arm64" ]; then \
-        echo "Installing CUDA toolkit ${CUDA_VERSION} for arm64"; \
-        wget -qO /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/aarch64/cuda-keyring_1.0-1_all.deb; \
-        dpkg -i /tmp/cuda-keyring.deb || echo "Warning: dpkg -i cuda-keyring failed; continuing"; \
-        rm -f /tmp/cuda-keyring.deb; \
-        apt-get update && apt-get install -y --no-install-recommends cuda-toolkit-$(echo ${CUDA_VERSION} | tr '.' '-') || \
-        (echo "CUDA toolkit ${CUDA_VERSION} not available via apt for this architecture; skipping install"; true); \
+        # Run CUDA toolkit install in a tolerant subshell: failures here are non-fatal
+        ( \
+            set +e; \
+            echo "Installing CUDA toolkit ${CUDA_VERSION} for arm64"; \
+            wget -qO /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/aarch64/cuda-keyring_1.0-1_all.deb; \
+            dpkg -i /tmp/cuda-keyring.deb || echo "Warning: dpkg -i cuda-keyring failed; continuing"; \
+            rm -f /tmp/cuda-keyring.deb; \
+            apt-get update || echo "apt-get update failed after adding cuda keyring; continuing"; \
+            apt-get install -y --no-install-recommends cuda-toolkit-$(echo ${CUDA_VERSION} | tr '.' '-') || \
+            echo "CUDA toolkit ${CUDA_VERSION} not available via apt for this architecture; skipping install"; \
+        ); \
     fi; \
     rm -rf /var/lib/apt/lists/*
 
@@ -83,7 +88,7 @@ RUN set -eux; \
     echo "Installing CUDA-enabled PyTorch (GPU) into maskdino env"; \
     # Prefer known-working wheel for manylinux aarch64 (cu130), then fall back
     CANDIDATES=("13.0" "${CUDA_VERSION}" "12.1"); \
-    TORCH_VERSION="2.0.1"; TV_VERSION="0.17.0"; TA_VERSION="2.2.0"; \
+    TORCH_VERSION="1.9.0"; TV_VERSION="0.10.0"; TA_VERSION="2.2.0"; \
     success=0; \
     for ver in "${CANDIDATES[@]}"; do \
         case "${ver}" in \
@@ -93,7 +98,7 @@ RUN set -eux; \
             *) IDX="https://download.pytorch.org/whl/cu131" ;; \
         esac; \
         echo "Trying PyTorch wheels for CUDA ${ver} (index ${IDX})"; \
-        if ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-deps --index-url "${IDX}" "torch==${TORCH_VERSION}" "torchvision==${TV_VERSION}" "torchaudio==${TA_VERSION}"; then \
+        if ${CONDA_DIR}/bin/conda run -n maskdino conda install -y -c pytorch -c nvidia pytorch==1.9.0 torchvision==0.10.0 cudatoolkit=11.1; then \
             echo "Successfully installed torch wheel for CUDA ${ver}"; success=1; break; \
         fi; \
         echo "pip wheel install failed for CUDA ${ver}, trying next candidate"; \
