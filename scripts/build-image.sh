@@ -92,6 +92,13 @@ if [ "$NO_CACHE" -eq 1 ]; then
   BUILD_CMD+=(--no-cache)
 fi
 
+# Determine correct Miniconda installer for target platform and pass as build-arg
+CONDA_INSTALLER_URL="https://repo.anaconda.com/miniconda/Miniconda3-py38_4.9.2-Linux-x86_64.sh"
+if echo "$PLATFORM" | grep -q "arm64"; then
+  CONDA_INSTALLER_URL="https://repo.anaconda.com/miniconda/Miniconda3-py38_4.9.2-Linux-aarch64.sh"
+fi
+BUILD_CMD+=(--build-arg "CONDA_INSTALLER_URL=$CONDA_INSTALLER_URL")
+
 echo "Running: ${BUILD_CMD[*]}"
 "${BUILD_CMD[@]}"
 

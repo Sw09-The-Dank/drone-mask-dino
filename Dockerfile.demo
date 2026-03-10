@@ -4,6 +4,8 @@
 ARG BASE_IMAGE=pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel
 ARG TARGETPLATFORM
 ARG TARGETARCH
+# Allow overriding the Miniconda installer for different CPU architectures
+ARG CONDA_INSTALLER_URL=https://repo.anaconda.com/miniconda/Miniconda3-py38_4.9.2-Linux-x86_64.sh
 # Ensure the base image is pulled for the requested target platform so buildx
 # doesn't default to an amd64 variant on arm64 hosts.
 FROM --platform=${TARGETPLATFORM} ${BASE_IMAGE}
@@ -31,7 +33,7 @@ RUN set -eux; \
 ENV CONDA_DIR=/opt/conda
 RUN set -eux; \
     if [ ! -d "${CONDA_DIR}" ]; then \
-        wget -qO /tmp/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-py38_4.9.2-Linux-x86_64.sh; \
+        wget -qO /tmp/miniconda.sh "${CONDA_INSTALLER_URL}"; \
         bash /tmp/miniconda.sh -b -p "${CONDA_DIR}"; \
         rm /tmp/miniconda.sh; \
     else \
