@@ -16,9 +16,9 @@ COPY . /workspace
 RUN set -eux; \
     if [ "${BUILD_OPS}" = "1" ]; then \
         if [ -d maskdino/modeling/pixel_decoder/ops ]; then \
-            cd maskdino/modeling/pixel_decoder/ops && sh make.sh; \
+            cd maskdino/modeling/pixel_decoder/ops && TORCH_CUDA_ARCH_LIST="8.6;8.0;7.5" FORCE_CUDA=1 sh make.sh; \
         elif [ -d MaskDINO/maskdino/modeling/pixel_decoder/ops ]; then \
-            cd MaskDINO/maskdino/modeling/pixel_decoder/ops && sh make.sh; \
+            cd MaskDINO/maskdino/modeling/pixel_decoder/ops && TORCH_CUDA_ARCH_LIST="8.6;8.0;7.5" FORCE_CUDA=1 sh make.sh; \
         else \
             echo "No ops directory found at maskdino/... or MaskDINO/maskdino/... -- skipping"; \
         fi; \
