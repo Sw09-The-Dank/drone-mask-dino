@@ -77,9 +77,9 @@ else
 fi
 
 # Provide ARG placeholders so any ${TARGETPLATFORM}/${TARGETARCH}/${BASE_IMAGE}
-# expansions in later RUN lines are defined (they will be empty unless build-args
-# are provided). These ARG lines are safe after the FROM.
-printf "ARG TARGETPLATFORM\nARG TARGETARCH\nARG BASE_IMAGE=%s\n" "$BASE_IMAGE" >> "$tmp_dockerfile"
+# and ${CONDA_INSTALLER_URL} expansions in later RUN lines are defined.
+# These ARG lines are safe after the FROM.
+printf "ARG TARGETPLATFORM\nARG TARGETARCH\nARG BASE_IMAGE=%s\nARG CONDA_INSTALLER_URL\n" "$BASE_IMAGE" >> "$tmp_dockerfile"
 awk 'found==0 && /^FROM /{found=1; next} found==1{print}' "$orig_dockerfile" >> "$tmp_dockerfile"
 
 if [ "${FORCE_NATIVE:-0}" = "1" ] || [ "$PLATFORM" = "$host_platform" ]; then
