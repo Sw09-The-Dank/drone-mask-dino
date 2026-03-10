@@ -43,7 +43,7 @@ RUN set -eux; \
     if [ "${INSTALL_CUDA_TOOLKIT:-0}" = "1" ] && [ "${TARGETARCH:-}" = "arm64" ]; then \
         echo "Installing CUDA toolkit ${CUDA_VERSION} for arm64"; \
         wget -qO /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/aarch64/cuda-keyring_1.0-1_all.deb; \
-        dpkg -i /tmp/cuda-keyring.deb; \
+        dpkg -i /tmp/cuda-keyring.deb || echo "Warning: dpkg -i cuda-keyring failed; continuing"; \
         rm -f /tmp/cuda-keyring.deb; \
         apt-get update && apt-get install -y --no-install-recommends cuda-toolkit-$(echo ${CUDA_VERSION} | tr '.' '-') || \
         (echo "CUDA toolkit ${CUDA_VERSION} not available via apt for this architecture; skipping install"; true); \
