@@ -70,7 +70,7 @@ RUN set -eux; \
         chmod +x make.sh || true; \
         FORCE_CUDA=1 CUDA_HOME=/usr/local/cuda PATH=/usr/local/cuda/bin:$PATH TORCH_CUDA_ARCH_LIST=8.0 sh make.sh; \
     else \
-        echo "Skipping in-image ops build (BUILD_OPS_AT_BUILD=${BUILD_OPS_AT_BUILD})"; \
+        echo "Skipping in-image ops build (BUILD_OPS_AT_BUILD=${BUILD_OPS_AT_BUILD:-0})"; \
     fi
 
 # Note: building CUDA extensions (MSDeformAttn) may need to be run inside the
