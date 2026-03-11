@@ -17,7 +17,7 @@ RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
         build-essential ca-certificates git wget curl pkg-config cmake \
         libglib2.0-0 libsm6 libxrender1 libxext6 libhdf5-dev libjpeg-dev zlib1g-dev unzip \
-        libgl1-mesa-glx libgl1 && \
+        libgl1-mesa-glx libgl1 ninja-build && \
     rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip and install Python requirements via pip
@@ -29,6 +29,12 @@ RUN set -eux; \
 # Ensure OpenCV is installed (try full package, fall back to headless)
 RUN set -eux; \
     python -m pip install opencv-python || python -m pip install opencv-python-headless
+
+# Pin NumPy to <2 and ensure build helpers are present so native extensions
+# compile against a compatible ABI. Also ensure a recent pybind11 and ninja
+# are available for building C++/CUDA extensions.
+RUN set -eux; \
+    python -m pip install "numpy<2" "pybind11>=2.12" ninja || true
 
 # (detectron2 will be installed after copying workspace so local source is used)
 
