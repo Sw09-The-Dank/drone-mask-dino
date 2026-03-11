@@ -73,7 +73,7 @@ RUN set -eux; \
 COPY docker-entrypoint.sh /workspace/docker-entrypoint.sh
 RUN chmod +x /workspace/docker-entrypoint.sh || true
 
-# ENTRYPOINT ["/workspace/docker-entrypoint.sh"]
+ENTRYPOINT ["/workspace/docker-entrypoint.sh"]
 CMD ["python","MaskDINO/demo/demo.py","--config-file","/workspace/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"]
 
 
