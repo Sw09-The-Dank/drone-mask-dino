@@ -25,17 +25,10 @@ if [ "${BUILD_OPS:-0}" = "1" ]; then
   fi
 fi
 
-echo "Executing: $@"
-exec "$@"
-#!/bin/bash
-# Entry point: run training if RUN_TRAIN=1, otherwise run provided command (default: bash)
-set -e
-if [ "${RUN_TRAIN:-0}" = "1" ]; then
-  exec /opt/venv/bin/python train.py
-fi
-
 if [ "$#" -eq 0 ]; then
+  echo "No command provided; launching interactive shell."
   exec /bin/bash
 else
+  echo "Executing: $@"
   exec "$@"
 fi
