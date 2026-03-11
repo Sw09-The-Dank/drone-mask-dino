@@ -98,7 +98,7 @@ if command -v nvcc >/dev/null 2>&1; then
     # Build the ops using the ops' own make.sh (this script installs the
     # extension into the Python environment). Run it from the ops directory.
     cd /workspace/MaskDINO_patched/maskdino/modeling/pixel_decoder/ops
-    TORCH_CUDA_ARCH_LIST=$(python - <<'PY'
+    TORCH_CUDA_ARCH_LIST=$(python - <<'PYEND'
 import sys
 try:
     import torch
@@ -108,7 +108,7 @@ except Exception:
     # fallback list
     print("12.1;8.6;8.0;7.5")
     sys.exit(0)
-PY
+PYEND
 )
     echo "Using TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}"
     export FORCE_CUDA=1
@@ -147,7 +147,7 @@ PY
     # (e.g. MultiScaleDeformableAttention*.so). Ensure it's also available at
     # maskdino.modeling.pixel_decoder.ops.ms_deform_attn_cuda by creating a
     # symlink inside site-packages if needed, then verify importability.
-    python - <<'PY'
+    python - <<'PYEND'
 import sys, os, glob, site
 def ensure_symlink():
     so_patterns = ['*MultiScaleDeformableAttention*.so', '*ms_deform_attn_cuda*.so']
@@ -198,7 +198,7 @@ except Exception as e:
     print('ms_deform_attn_cuda import failed during image build:', e, file=sys.stderr)
     sys.exit(1)
 print('ms_deform_attn_cuda import OK')
-    PY
+PYEND
     # create a marker so entrypoint can skip rebuilding at container start
     touch /workspace/.ops_built
 else
