@@ -12,12 +12,18 @@ WORKDIR /workspace
 COPY requirements.txt /workspace/requirements.txt
 COPY MaskDINO/requirements.txt /workspace/MaskDINO-requirements.txt
 
-# Install minimal system dependencies required by Detectron2/MaskDINO and for building wheels
+# Install minimal system dependencies required by Detectron2/MaskDINO and for building wheels.
+# Some EGL/GL package names vary across Ubuntu releases and vendor images; attempt
+# core packages first, then try EGL/mesa variants with fallbacks so build doesn't fail.
 RUN set -eux; \
-    apt-get update && apt-get install -y --no-install-recommends \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
         build-essential ca-certificates git wget curl pkg-config cmake \
         libglib2.0-0 libsm6 libxrender1 libxext6 libhdf5-dev libjpeg-dev zlib1g-dev unzip \
-        libgl1 libegl1-mesa libgl1-mesa-dri ninja-build && \
+        libgl1 ninja-build || true; \
+    # Try common EGL/mesa package names (non-fatal if none available)
+    (apt-get install -y --no-install-recommends libegl-mesa0 || apt-get install -y --no-install-recommends libegl1-mesa || true); \
+    (apt-get install -y --no-install-recommends libgl1-mesa-dri || true); \
     rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip and install Python requirements via pip
