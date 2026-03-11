@@ -7,7 +7,19 @@ set -euo pipefail
 WORKDIR=/workspace
 cd "$WORKDIR" || true
 
-if [ "${BUILD_OPS:-0}" = "1" ]; then
+# If ops were baked into the image at build time, skip runtime build unless
+# the user explicitly requests a rebuild via BUILD_OPS=1.
+SKIP_BUILD=0
+if [ -f /workspace/.ops_built ]; then
+  if [ "${BUILD_OPS:-0}" = "1" ]; then
+    echo "/workspace/.ops_built found but BUILD_OPS=1: forcing rebuild"
+  else
+    echo "/workspace/.ops_built found: skipping ops build at container start"
+    SKIP_BUILD=1
+  fi
+fi
+
+if [ "${SKIP_BUILD:-0}" != "1" ] && [ "${BUILD_OPS:-0}" = "1" ]; then
   echo "BUILD_OPS=1: attempting to build CUDA ops via /workspace/build_ops.sh"
   echo "Applying in-image compatibility patches for MaskDINO sources (non-destructive)"
   set +e
@@ -65,6 +77,8 @@ if [ "${BUILD_OPS:-0}" = "1" ]; then
       echo "If building CUDA ops requires nvcc/toolchain, rebuild image using a devel base or run the devel container manually."
     else
       echo "CUDA ops build completed successfully."
+      # create marker so subsequent container starts can skip build
+      touch /workspace/.ops_built || true
     fi
   else
     echo "No /workspace/build_ops.sh found or not executable; skipping ops build."
