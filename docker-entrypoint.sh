@@ -9,6 +9,15 @@ cd "$WORKDIR" || true
 
 if [ "${BUILD_OPS:-0}" = "1" ]; then
   echo "BUILD_OPS=1: attempting to build CUDA ops via /workspace/build_ops.sh"
+  echo "Applying in-image compatibility patches for MaskDINO sources (non-destructive)"
+  set +e
+  if [ -d third_party/MaskDINO ] || [ -d MaskDINO ]; then
+    find third_party/MaskDINO MaskDINO -type f \( -name "*.cu" -o -name "*.cuh" -o -name "*.h" -o -name "*.cpp" \) -print0 2>/dev/null | xargs -0 -r sed -i 's/\.type()\.is_cuda()/\.is_cuda()/g'
+    find third_party/MaskDINO MaskDINO -type f \( -name "*.cu" -o -name "*.cuh" -o -name "*.h" -o -name "*.cpp" \) -print0 2>/dev/null | xargs -0 -r sed -i 's/AT_DISPATCH_FLOATING_TYPES(value.type(),/AT_DISPATCH_FLOATING_TYPES(value.scalar_type(),/g'
+  else
+    echo "No MaskDINO source directories found to patch."
+  fi
+  set -e
   if [ -x /workspace/build_ops.sh ]; then
     set +e
     /workspace/build_ops.sh
