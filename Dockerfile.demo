@@ -143,8 +143,37 @@ PY
         fi
     fi
 
-    # verify the op is importable; fail the build if import fails
+    # Some make.sh/setup.py installers place the compiled .so at top-level
+    # (e.g. MultiScaleDeformableAttention*.so). Ensure it's also available at
+    # maskdino.modeling.pixel_decoder.ops.ms_deform_attn_cuda by creating a
+    # symlink inside site-packages if needed, then verify importability.
     python - <<'PY'
+import sys, os, glob, site
+def ensure_symlink():
+    so_patterns = ['*MultiScaleDeformableAttention*.so', '*ms_deform_attn_cuda*.so']
+    site_paths = []
+    try:
+        site_paths = list(site.getsitepackages())
+    except Exception:
+        site_paths = [sys.prefix + '/lib/python' + sys.version[:3] + '/site-packages']
+    for sp in site_paths:
+        for pat in so_patterns:
+            for f in glob.glob(os.path.join(sp, pat)):
+                target_dir = os.path.join(sp, 'maskdino', 'modeling', 'pixel_decoder', 'ops')
+                os.makedirs(target_dir, exist_ok=True)
+                dest = os.path.join(target_dir, 'ms_deform_attn_cuda' + os.path.splitext(f)[1])
+                if not os.path.exists(dest):
+                    try:
+                        os.symlink(f, dest)
+                    except Exception:
+                        try:
+                            # fallback to copy if symlink not permitted
+                            import shutil
+                            shutil.copy2(f, dest)
+                        except Exception:
+                            pass
+                print('linked', f, '->', dest)
+ensure_symlink()
 import importlib, sys
 try:
     importlib.import_module('maskdino.modeling.pixel_decoder.ops.ms_deform_attn_cuda')
