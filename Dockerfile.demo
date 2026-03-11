@@ -2,6 +2,7 @@
 # Installs CUDA-enabled PyTorch from the base image and uses pip for requirements
 
 ARG BASE_IMAGE=pytorch/pytorch:2.2.0-cuda11.8-cudnn8-runtime
+ARG BUILD_OPS_AT_BUILD=0
 FROM ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -20,7 +21,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
         build-essential ca-certificates git wget curl pkg-config cmake \
         libglib2.0-0 libsm6 libxrender1 libxext6 libhdf5-dev libjpeg-dev zlib1g-dev unzip \
-        libgl1 ninja-build || true; \
+        libgl1 ninja-build perl || true; \
     # Try common EGL/mesa package names (non-fatal if none available)
     (apt-get install -y --no-install-recommends libegl-mesa0 || apt-get install -y --no-install-recommends libegl1-mesa || true); \
     (apt-get install -y --no-install-recommends libgl1-mesa-dri || true); \
@@ -52,6 +53,25 @@ COPY . /workspace
 # Make the provided helper executable
 COPY build_ops.sh /workspace/build_ops.sh
 RUN chmod +x /workspace/build_ops.sh || true
+
+# Optionally compile CUDA ops during image build. This requires a devel base image
+# that includes the CUDA toolkit (nvcc). Build with `--build-arg BUILD_OPS_AT_BUILD=1`
+# and a devel base image, for example:
+#   docker build -f Dockerfile.demo --build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.01-py3-devel \ 
+#       --build-arg BUILD_OPS_AT_BUILD=1 -t maskdino-demo:devel .
+RUN set -eux; \
+    if [ "${BUILD_OPS_AT_BUILD:-0}" = "1" ]; then \
+        echo "BUILD_OPS_AT_BUILD=1: building MultiScaleDeformableAttention inside image"; \
+        cp -a /workspace/MaskDINO /workspace/MaskDINO_patched; \
+        find /workspace/MaskDINO_patched -type f \( -name "*.cu" -o -name "*.cuh" -o -name "*.h" -o -name "*.cpp" \) -print0 | xargs -0 -r sed -i 's/\.type()\.is_cuda()/\.is_cuda()/g'; \
+        find /workspace/MaskDINO_patched -type f -name "*.cu" -print0 | xargs -0 -r perl -0777 -pe "s/AT_DISPATCH_FLOATING_TYPES\s*\(\s*value\.type\s*\(\s*\)\s*,/AT_DISPATCH_FLOATING_TYPES(value.scalar_type(),/gs" -i || true; \
+        find /workspace/MaskDINO_patched -type f \( -name "*.cu" -o -name "*.h" -o -name "*.cpp" \) -print0 | xargs -0 -r sed -i 's/value.type()/value.scalar_type()/g' || true; \
+        cd /workspace/MaskDINO_patched/maskdino/modeling/pixel_decoder/ops; \
+        chmod +x make.sh || true; \
+        FORCE_CUDA=1 CUDA_HOME=/usr/local/cuda PATH=/usr/local/cuda/bin:$PATH TORCH_CUDA_ARCH_LIST=8.0 sh make.sh; \
+    else \
+        echo "Skipping in-image ops build (BUILD_OPS_AT_BUILD=${BUILD_OPS_AT_BUILD})"; \
+    fi
 
 # Note: building CUDA extensions (MSDeformAttn) may need to be run inside the
 # container where the host CUDA toolkit is available. To compile at runtime:

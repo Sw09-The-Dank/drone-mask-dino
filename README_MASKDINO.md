@@ -192,3 +192,29 @@ docker run --gpus all --rm -it -v "$PWD":/workspace maskdino-demo:local /bin/bas
 - **Notes:**
     - Building an amd64 CUDA image on an arm64 host requires QEMU-based emulation or cross-building with `docker buildx`; running that amd64 container with GPU passthrough typically only works on Linux hosts with matching NVIDIA drivers. 
     - If you need, I can add a small Makefile or Windows PowerShell helper to simplify common build targets.
+
+
+
+
+
+
+Managed to do the ops:
+
+# create patched copy
+cp -a MaskDINO /workspace/MaskDINO_patched
+
+# confirm ops dir exists
+ls -la /workspace/MaskDINO_patched/maskdino/modeling/pixel_decoder/ops
+
+# apply replacements (safe, in-patched copy)
+find /workspace/MaskDINO_patched -type f \( -name "*.cu" -o -name "*.cuh" -o -name "*.h" -o -name "*.cpp" \) -print0 \
+  | xargs -0 sed -i 's/\.type()\.is_cuda()/\.is_cuda()/g'
+find /workspace/MaskDINO_patched -type f -name "*.cu" -print0 \
+  | xargs -0 perl -0777 -pe "s/AT_DISPATCH_FLOATING_TYPES\s*\(\s*value\.type\s*\(\s*\)\s*,/AT_DISPATCH_FLOATING_TYPES(value.scalar_type(),/gs" -i
+find /workspace/MaskDINO_patched -type f \( -name "*.cu" -o -name "*.h" -o -name "*.cpp" \) -print0 \
+  | xargs -0 sed -i 's/value.type()/value.scalar_type()/g'
+
+# build from patched ops (force CUDA, set PATH to nvcc)
+cd /workspace/MaskDINO_patched/maskdino/modeling/pixel_decoder/ops
+chmod +x make.sh || true
+FORCE_CUDA=1 CUDA_HOME=/usr/local/cuda PATH=/usr/local/cuda/bin:$PATH TORCH_CUDA_ARCH_LIST=8.0 sh make.sh
