@@ -156,6 +156,7 @@ def ensure_symlink():
         site_paths = list(site.getsitepackages())
     except Exception:
         site_paths = [sys.prefix + '/lib/python' + sys.version[:3] + '/site-packages']
+    # Link into site-packages maskdino path (for standard installs)
     for sp in site_paths:
         for pat in so_patterns:
             for f in glob.glob(os.path.join(sp, pat)):
@@ -167,12 +168,28 @@ def ensure_symlink():
                         os.symlink(f, dest)
                     except Exception:
                         try:
-                            # fallback to copy if symlink not permitted
                             import shutil
                             shutil.copy2(f, dest)
                         except Exception:
                             pass
                 print('linked', f, '->', dest)
+    # Also link into the in-repo patched MaskDINO tree (on PYTHONPATH)
+    repo_target = '/workspace/MaskDINO_patched/maskdino/modeling/pixel_decoder/ops'
+    os.makedirs(repo_target, exist_ok=True)
+    for sp in site_paths:
+        for pat in so_patterns:
+            for f in glob.glob(os.path.join(sp, pat)):
+                dest = os.path.join(repo_target, 'ms_deform_attn_cuda' + os.path.splitext(f)[1])
+                if not os.path.exists(dest):
+                    try:
+                        os.symlink(f, dest)
+                    except Exception:
+                        try:
+                            import shutil
+                            shutil.copy2(f, dest)
+                        except Exception:
+                            pass
+                print('linked to repo', f, '->', dest)
 ensure_symlink()
 import importlib, sys
 try:
@@ -181,7 +198,7 @@ except Exception as e:
     print('ms_deform_attn_cuda import failed during image build:', e, file=sys.stderr)
     sys.exit(1)
 print('ms_deform_attn_cuda import OK')
-PY
+    PY
     # create a marker so entrypoint can skip rebuilding at container start
     touch /workspace/.ops_built
 else
