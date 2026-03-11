@@ -62,25 +62,83 @@ RUN chmod +x /workspace/build_ops.sh || true
 RUN bash -eux <<'BASH'
 # If nvcc is available in the base image, compile the CUDA ops during build.
 # If the user explicitly requested BUILD_OPS_AT_BUILD=1 but nvcc is missing,
-# fail the build so the mistake is visible.
+# fail the build so the mistake is visible. Prefer a devel base image that
+# contains nvcc (example: nvcr.io/nvidia/pytorch:26.01-py3-devel) when
+# compiling at build time.
 if command -v nvcc >/dev/null 2>&1; then
     echo "nvcc detected: attempting in-image build of MultiScaleDeformableAttention"
+    # Ensure nvcc is the expected CUDA version when BUILD_OPS_AT_BUILD requested
+    if [ "${BUILD_OPS_AT_BUILD:-0}" = "1" ]; then
+        NVCC_VER_FULL=$(nvcc --version || true)
+        echo "nvcc --version:\n$NVCC_VER_FULL"
+        if ! echo "$NVCC_VER_FULL" | grep -q "release 13.1"; then
+            echo "Warning: nvcc does not report CUDA 13.1. Detected:" >&2
+            echo "$NVCC_VER_FULL" >&2
+            echo "Proceeding anyway, but consider using a CUDA 13.1 devel base image." >&2
+        fi
+    fi
+
     cp -a /workspace/MaskDINO /workspace/MaskDINO_patched
-    find /workspace/MaskDINO_patched -type f \( -name "*.cu" -o -name "*.cuh" -o -name "*.h" -o -name "*.cpp" \) -print0 | xargs -0 -r sed -i 's/\.type()\.is_cuda()/\.is_cuda()/g'
+    find /workspace/MaskDINO_patched -type f \( -name "*.cu" -o -name "*.cuh" -o -name "*.h" -o -name "*.cpp" \) -print0 | xargs -0 -r sed -i 's/\.type()\.is_cuda()/\.is_cuda()/g' || true
     find /workspace/MaskDINO_patched -type f -name "*.cu" -print0 | xargs -0 -r perl -0777 -pe "s/AT_DISPATCH_FLOATING_TYPES\s*\(\s*value\.type\s*\(\s*\)\s*,/AT_DISPATCH_FLOATING_TYPES(value.scalar_type(),/gs" -i || true
     find /workspace/MaskDINO_patched -type f \( -name "*.cu" -o -name "*.h" -o -name "*.cpp" \) -print0 | xargs -0 -r sed -i 's/value.type()/value.scalar_type()/g' || true
-    cd /workspace/MaskDINO_patched/maskdino/modeling/pixel_decoder/ops
-    chmod +x make.sh || true
-    FORCE_CUDA=1 CUDA_HOME=/usr/local/cuda PATH=/usr/local/cuda/bin:$PATH TORCH_CUDA_ARCH_LIST=8.0 sh make.sh
+
+    # Build in-place so .so files live next to package modules
+    cd /workspace/MaskDINO_patched
+    # Detect device compute capability for TORCH_CUDA_ARCH_LIST (major.minor)
+    TORCH_CUDA_ARCH_LIST=$(python - <<'PY'
+import sys
+try:
+    import torch
+    p = torch.cuda.get_device_properties(0)
+    print(f"{p.major}.{p.minor}")
+except Exception as e:
+    # fallback to common arch list if detection fails
+    print("8.6;8.0;7.5")
+    sys.exit(0)
+PY
+)
+    echo "Using TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}"
+    export FORCE_CUDA=1
+    export CUDA_HOME=/usr/local/cuda
+    export PATH=/usr/local/cuda/bin:$PATH
+    export TORCH_CUDA_ARCH_LIST
+    # Try build_ext --inplace to place .so files next to modules
+    set +e
+    python setup.py build_ext --inplace
+    RC=$?
+    set -e
+    if [ $RC -ne 0 ]; then
+        echo "build_ext failed (rc=$RC), trying fallback multi-arch lists"
+        candidates=("12.1;8.6;8.0;7.5" "8.6;8.0;7.5" "8.0;7.5;7.0")
+        for LIST in "${candidates[@]}"; do
+            echo "Trying TORCH_CUDA_ARCH_LIST=$LIST"
+            export TORCH_CUDA_ARCH_LIST="$LIST"
+            rm -rf build || true
+            set +e
+            python setup.py build_ext --inplace
+            RC=$?
+            set -e
+            if [ $RC -eq 0 ]; then
+                echo "Build succeeded with $LIST"
+                break
+            fi
+        done
+        if [ $RC -ne 0 ]; then
+            echo "All in-place build attempts failed. See output above." >&2
+            exit 1
+        fi
+    fi
+
     # verify the op is importable; fail the build if import fails
     python - <<'PY'
 import importlib, sys
 try:
-    importlib.import_module('MultiScaleDeformableAttention')
+    importlib.import_module('maskdino.modeling.pixel_decoder.ops.ms_deform_attn_cuda')
 except Exception as e:
-    print('MultiScaleDeformableAttention import failed during image build:', e, file=sys.stderr)
+    print('ms_deform_attn_cuda import failed during image build:', e, file=sys.stderr)
     sys.exit(1)
-print('MultiScaleDeformableAttention import OK')
+print('ms_deform_attn_cuda import OK')
 PY
     # create a marker so entrypoint can skip rebuilding at container start
     touch /workspace/.ops_built
