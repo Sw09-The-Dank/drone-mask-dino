@@ -19,6 +19,8 @@ def main():
     parser.add_argument("--train-json", default=None)
     parser.add_argument("--val-json", default=None)
     parser.add_argument("--images-root", default=None)
+    parser.add_argument("--output", default=None,
+                        help="Optional output directory to set as OUTPUT_DIR for MaskDINO")
     # parse known so we keep the rest for MaskDINO.train_net
     args, rest = parser.parse_known_args()
 
@@ -47,6 +49,11 @@ def main():
             "DATASETS.TEST",
             "('" + val_name + "',)",
         ]
+
+        # If the user provided an --output path to this launcher, translate it
+        # into a config override for OUTPUT_DIR so MaskDINO will use it.
+        if args.output:
+            dataset_overrides.extend(["OUTPUT_DIR", args.output])
     else:
         dataset_overrides = []
 
