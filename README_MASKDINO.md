@@ -223,14 +223,21 @@ FORCE_CUDA=1 CUDA_HOME=/usr/local/cuda PATH=/usr/local/cuda/bin:$PATH TORCH_CUDA
 
 
 
-sudo docker run --gpus=all --rm -it  \
-    --ulimit memlock=-1 \
-    --shm-size=8g \
-    --ulimit stack=67108864 \
-    -v "$(pwd)":/workspace   --entrypoint /bin/bash   maskdino-demo:devel -c "cd /workspace && python train_mask.py \
-    --config-file MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml \
-    --num-gpus 1 \
-    --output /workspace/output \
-    --train-json /workspace/output_annotations/train_polygons_clean.json \
-    --val-json /workspace/output_annotations/val_polygons_clean.json \
-    --images-root /workspace/dataset/images/train"
+
+
+
+
+sudo docker run --gpus=all --rm -it   --ulimit memlock=-1 --shm-size=8g --ulimit stack=67108864   -v "$(pwd)":/workspace --entrypoint /bin/bash maskdino-demo:devel -c "\
+    cd /workspace && \
+    python scripts/launch_maskdino.py \
+  --train-json /workspace/output_annotations/train_polygons_clean.json \
+  --val-json   /workspace/output_annotations/val_polygons_clean.json \
+  --images-root /workspace/dataset/images/train \
+  --config-file MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml \
+  --num-gpus 1 --output /workspace/output"
+
+
+
+
+
+  sudo docker build -f Dockerfile.demo --build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.01-py3 --build-arg BUILD_OPS_AT_BUILD=1 -t maskdino-demo:devel .
