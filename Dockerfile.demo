@@ -157,13 +157,18 @@ def ensure_symlink():
     except Exception:
         site_paths = [sys.prefix + '/lib/python' + sys.version[:3] + '/site-packages']
 
-    # Link/copy .so into maskdino package path in site-packages
+    # Copy/link the compiled .so into the package directory, but keep the
+    # original filename to avoid Python attempting to load it under the
+    # `ms_deform_attn_cuda` symbol name (which would fail if the compiled
+    # module was built with a different PyInit name). We'll create a
+    # Python shim below that imports the original module name and re-exports
+    # symbols under `ms_deform_attn_cuda`.
     for sp in site_paths:
         for pat in so_patterns:
             for f in glob.glob(os.path.join(sp, pat)):
                 target_dir = os.path.join(sp, 'maskdino', 'modeling', 'pixel_decoder', 'ops')
                 os.makedirs(target_dir, exist_ok=True)
-                dest = os.path.join(target_dir, 'ms_deform_attn_cuda' + os.path.splitext(f)[1])
+                dest = os.path.join(target_dir, os.path.basename(f))
                 if not os.path.exists(dest):
                     try:
                         os.symlink(f, dest)
@@ -181,7 +186,7 @@ def ensure_symlink():
     for sp in site_paths:
         for pat in so_patterns:
             for f in glob.glob(os.path.join(sp, pat)):
-                dest = os.path.join(repo_target, 'ms_deform_attn_cuda' + os.path.splitext(f)[1])
+                dest = os.path.join(repo_target, os.path.basename(f))
                 if not os.path.exists(dest):
                     try:
                         os.symlink(f, dest)
