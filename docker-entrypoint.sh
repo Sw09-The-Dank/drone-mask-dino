@@ -41,7 +41,7 @@ if [ "${BUILD_OPS:-0}" = "1" ]; then
       set +e
       (cd /workspace/MaskDINO_patched/maskdino/modeling/pixel_decoder/ops && \
         chmod +x make.sh || true && \
-        TRY_LISTS=("12.0;12.1+PTX;8.6;8.0;7.5" "12.1+PTX;8.6;8.0;7.5" "8.6;8.0;7.5") && \
+        TRY_LISTS=("12.0;12.1+PTX;8.6;8.0;7.5" "12.1+PTX;8.6;8.0;7.5" "8.6;8.0;7.5" "8.0") && \
         for LIST in "${TRY_LISTS[@]}"; do \
           echo "Attempting build with TORCH_CUDA_ARCH_LIST=${LIST}"; \
           if TORCH_CUDA_ARCH_LIST="$LIST" sh make.sh; then echo "Build succeeded with ${LIST}"; exit 0; else echo "Build failed with ${LIST}"; fi; \
