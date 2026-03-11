@@ -56,6 +56,61 @@ def main():
     maskdino_pkg_dir = os.path.join(os.getcwd(), "MaskDINO")
     if maskdino_pkg_dir not in sys.path:
         sys.path.insert(0, maskdino_pkg_dir)
+    # Defensive monkeypatch: convert any numpy.ndarray segmentation fields
+    # produced by upstream preprocessing into plain python lists before
+    # Detectron2's `annotations_to_instances` consumes them. This avoids
+    # modifying files inside the MaskDINO package while fixing runtime
+    # errors where PolygonMasks expects lists, not numpy arrays.
+    try:
+        import numpy as _np
+        from detectron2.data import detection_utils as _dutils
+
+        _orig_annotations_to_instances = _dutils.annotations_to_instances
+
+        def _patched_annotations_to_instances(annotations, image_size):
+            new_annos = []
+            for ann in annotations:
+                if not isinstance(ann, dict):
+                    new_annos.append(ann)
+                    continue
+                seg = ann.get("segmentation", None)
+                if seg is None:
+                    new_annos.append(ann)
+                    continue
+                # Make a shallow copy so we don't mutate caller objects
+                ann_copy = ann.copy()
+                # If segmentation is a numpy array -> convert
+                if isinstance(seg, _np.ndarray):
+                    if seg.ndim == 1:
+                        ann_copy["segmentation"] = seg.tolist()
+                    else:
+                        # Try to convert array of polygons
+                        try:
+                            ann_copy["segmentation"] = [p.tolist() for p in seg]
+                        except Exception:
+                            ann_copy["segmentation"] = seg.flatten().tolist()
+                elif isinstance(seg, list):
+                    # Convert any numpy arrays inside the list
+                    changed = False
+                    new_seg = []
+                    for poly in seg:
+                        if isinstance(poly, _np.ndarray):
+                            changed = True
+                            new_seg.append(poly.tolist())
+                        else:
+                            new_seg.append(poly)
+                    if changed:
+                        ann_copy["segmentation"] = new_seg
+
+                new_annos.append(ann_copy)
+
+            return _orig_annotations_to_instances(new_annos, image_size)
+
+        _dutils.annotations_to_instances = _patched_annotations_to_instances
+        print("Applied runtime monkeypatch to Detectron2 annotations_to_instances()")
+    except Exception:
+        # If anything goes wrong, don't prevent training; fall back to default behavior
+        pass
     # run the train_net.py file directly (some repos don't expose MaskDINO as an importable package)
     train_path = os.path.join(maskdino_pkg_dir, "train_net.py")
     runpy.run_path(train_path, run_name="__main__")

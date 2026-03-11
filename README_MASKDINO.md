@@ -218,3 +218,19 @@ find /workspace/MaskDINO_patched -type f \( -name "*.cu" -o -name "*.h" -o -name
 cd /workspace/MaskDINO_patched/maskdino/modeling/pixel_decoder/ops
 chmod +x make.sh || true
 FORCE_CUDA=1 CUDA_HOME=/usr/local/cuda PATH=/usr/local/cuda/bin:$PATH TORCH_CUDA_ARCH_LIST=8.0 sh make.sh
+
+
+
+
+
+sudo docker run --gpus=all --rm -it  \
+    --ulimit memlock=-1 \
+    --shm-size=8g \
+    --ulimit stack=67108864 \
+    -v "$(pwd)":/workspace   --entrypoint /bin/bash   maskdino-demo:devel -c "cd /workspace && python train_mask.py \
+    --config-file MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml \
+    --num-gpus 1 \
+    --output /workspace/output \
+    --train-json /workspace/output_annotations/train_polygons_clean.json \
+    --val-json /workspace/output_annotations/val_polygons_clean.json \
+    --images-root /workspace/dataset/images/train"

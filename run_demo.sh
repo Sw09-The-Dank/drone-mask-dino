@@ -10,7 +10,8 @@ shift || true
 # If user passes `--` we will forward remaining args; otherwise all args are forwarded.
 DEMO_ARGS=("$@")
 
-DOCKER_ARGS=(--gpus all -it --rm -v "$(pwd)":/workspace -w /workspace -e PYTHONPATH=/workspace)
+DOCKER_SHM_SIZE=${DOCKER_SHM_SIZE:-8g}
+DOCKER_ARGS=(--gpus all -it --rm --shm-size "${DOCKER_SHM_SIZE}" -v "$(pwd)":/workspace -w /workspace -e PYTHONPATH=/workspace)
 
 # If X11 is available on the host, forward display for GUI demos
 if [ -n "${DISPLAY:-}" ]; then
