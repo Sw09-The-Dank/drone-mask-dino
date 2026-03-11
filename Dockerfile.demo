@@ -48,6 +48,18 @@ RUN set -eux; \
 # Copy repository into image (demo expects MaskDINO/ and configs present)
 COPY . /workspace
 
+## Install detectron2 (prefer local source) and common extras before ops build
+RUN set -eux; \
+    # ensure pip tools are up to date
+    python -m pip install --upgrade pip setuptools wheel; \
+    if [ -d /workspace/detectron2 ]; then \
+        python -m pip install -e /workspace/detectron2 --no-build-isolation; \
+    else \
+        python -m pip install --no-build-isolation git+https://github.com/facebookresearch/detectron2.git; \
+    fi; \
+    python -m pip install git+https://github.com/cocodataset/panopticapi.git; \
+    python -m pip install git+https://github.com/mcordts/cityscapesScripts.git
+
 ## Compiled CUDA ops should be built at runtime with `/workspace/build_ops.sh` if needed
 
 # Make the provided helper executable
@@ -155,18 +167,6 @@ BASH
 # Note: building CUDA extensions (MSDeformAttn) may need to be run inside the
 # container where the host CUDA toolkit is available. To compile at runtime:
 #    /workspace/build_ops.sh
-
-## Install detectron2 (prefer local source) and common extras after workspace copy
-RUN set -eux; \
-    # ensure pip tools are up to date
-    python -m pip install --upgrade pip setuptools wheel; \
-    if [ -d /workspace/detectron2 ]; then \
-        python -m pip install -e /workspace/detectron2 --no-build-isolation; \
-    else \
-        python -m pip install --no-build-isolation git+https://github.com/facebookresearch/detectron2.git; \
-    fi; \
-    python -m pip install git+https://github.com/cocodataset/panopticapi.git; \
-    python -m pip install git+https://github.com/mcordts/cityscapesScripts.git
 
 # Default command runs the demo; override as needed
 COPY docker-entrypoint.sh /workspace/docker-entrypoint.sh
