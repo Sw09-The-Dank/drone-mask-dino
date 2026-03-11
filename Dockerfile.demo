@@ -148,15 +148,16 @@ PYEND
     # maskdino.modeling.pixel_decoder.ops.ms_deform_attn_cuda by creating a
     # symlink inside site-packages if needed, then verify importability.
     python - <<'PYEND'
-import sys, os, glob, site
+import sys, os, glob, site, importlib
+
 def ensure_symlink():
     so_patterns = ['*MultiScaleDeformableAttention*.so', '*ms_deform_attn_cuda*.so']
-    site_paths = []
     try:
         site_paths = list(site.getsitepackages())
     except Exception:
         site_paths = [sys.prefix + '/lib/python' + sys.version[:3] + '/site-packages']
-    # Link into site-packages maskdino path (for standard installs)
+
+    # Link/copy .so into maskdino package path in site-packages
     for sp in site_paths:
         for pat in so_patterns:
             for f in glob.glob(os.path.join(sp, pat)):
@@ -173,7 +174,8 @@ def ensure_symlink():
                         except Exception:
                             pass
                 print('linked', f, '->', dest)
-    # Also link into the in-repo patched MaskDINO tree (on PYTHONPATH)
+
+    # Also link/copy into the in-repo patched MaskDINO tree (on PYTHONPATH)
     repo_target = '/workspace/MaskDINO_patched/maskdino/modeling/pixel_decoder/ops'
     os.makedirs(repo_target, exist_ok=True)
     for sp in site_paths:
@@ -190,13 +192,67 @@ def ensure_symlink():
                         except Exception:
                             pass
                 print('linked to repo', f, '->', dest)
+
 ensure_symlink()
-import importlib, sys
+
+# If the compiled .so has a different extension module name (e.g. 
+# MultiScaleDeformableAttention.*.so), provide a small Python shim named
+# ms_deform_attn_cuda.py that imports the compiled module and re-exports
+# its public attributes. This avoids needing to rebuild the extension with
+# a different name.
+try:
+    site_paths2 = []
+    try:
+        site_paths2 = list(site.getsitepackages())
+    except Exception:
+        site_paths2 = [sys.prefix + '/lib/python' + sys.version[:3] + '/site-packages']
+
+    for sp in site_paths2:
+        target_dir = os.path.join(sp, 'maskdino', 'modeling', 'pixel_decoder', 'ops')
+        os.makedirs(target_dir, exist_ok=True)
+        for so in glob.glob(os.path.join(sp, 'MultiScaleDeformableAttention*.so')):
+            so_base = os.path.basename(so).split('.')[0]
+            shim = (
+                f"from importlib import import_module as _import_module\n"
+                f"_mod = _import_module('{so_base}')\n"
+                "for _name in dir(_mod):\n"
+                "    if not _name.startswith('_'):\n"
+                "        globals()[_name] = getattr(_mod, _name)\n"
+            )
+            shim_path = os.path.join(target_dir, 'ms_deform_attn_cuda.py')
+            if not os.path.exists(shim_path):
+                try:
+                    with open(shim_path, 'w') as fh:
+                        fh.write(shim)
+                    print('wrote shim', shim_path)
+                except Exception as e:
+                    print('failed to write shim', shim_path, e)
+
+    # Also create shim in the patched repo tree so PYTHONPATH import can find it
+    repo_target = '/workspace/MaskDINO_patched/maskdino/modeling/pixel_decoder/ops'
+    os.makedirs(repo_target, exist_ok=True)
+    for so in glob.glob(os.path.join(site_paths2[0], 'MultiScaleDeformableAttention*.so')):
+        so_base = os.path.basename(so).split('.')[0]
+        shim_path = os.path.join(repo_target, 'ms_deform_attn_cuda.py')
+        if not os.path.exists(shim_path):
+            try:
+                with open(shim_path, 'w') as fh:
+                    fh.write(
+                        f"from importlib import import_module as _import_module\n_mod = _import_module('{so_base}')\nfor _name in dir(_mod):\n    if not _name.startswith('_'):\n        globals()[_name] = getattr(_mod, _name)\n"
+                    )
+                print('wrote repo shim', shim_path)
+            except Exception as e:
+                print('failed to write repo shim', shim_path, e)
+except Exception as e:
+    print('shim creation failed', e)
+
+# Finally, verify importability of the expected module name used by MaskDINO
 try:
     importlib.import_module('maskdino.modeling.pixel_decoder.ops.ms_deform_attn_cuda')
 except Exception as e:
     print('ms_deform_attn_cuda import failed during image build:', e, file=sys.stderr)
     sys.exit(1)
+
 print('ms_deform_attn_cuda import OK')
 PYEND
     # create a marker so entrypoint can skip rebuilding at container start
