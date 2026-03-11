@@ -26,6 +26,10 @@ RUN set -eux; \
     pip install -r /workspace/requirements.txt || true; \
     pip install -r /workspace/MaskDINO-requirements.txt || true
 
+# Ensure OpenCV is installed (try full package, fall back to headless)
+RUN set -eux; \
+    python -m pip install opencv-python || python -m pip install opencv-python-headless
+
 # (detectron2 will be installed after copying workspace so local source is used)
 
 # Copy repository into image (demo expects MaskDINO/ and configs present)
@@ -54,6 +58,10 @@ RUN set -eux; \
     python -m pip install git+https://github.com/mcordts/cityscapesScripts.git
 
 # Default command runs the demo; override as needed
+COPY docker-entrypoint.sh /workspace/docker-entrypoint.sh
+RUN chmod +x /workspace/docker-entrypoint.sh || true
+
+ENTRYPOINT ["/workspace/docker-entrypoint.sh"]
 CMD ["python","MaskDINO/demo/demo.py","--config-file","/workspace/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"]
 
 
