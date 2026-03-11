@@ -73,15 +73,10 @@ RUN set -eux; \
         chmod +x make.sh || true; \
         FORCE_CUDA=1 CUDA_HOME=/usr/local/cuda PATH=/usr/local/cuda/bin:$PATH TORCH_CUDA_ARCH_LIST=8.0 sh make.sh; \
         # verify the op is importable; fail the build if import fails
-        python - <<'PY'
-import sys
-try:
-    import MultiScaleDeformableAttention
-except Exception as e:
-    print('MultiScaleDeformableAttention import failed during image build:', e, file=sys.stderr)
-    sys.exit(1)
-print('MultiScaleDeformableAttention import OK')
-PY
+        python -c "import sys, importlib;" \
+    try: importlib.import_module('MultiScaleDeformableAttention'); \
+    except Exception as e: print('MultiScaleDeformableAttention import failed during image build:', e, file=sys.stderr); sys.exit(1); \
+    print('MultiScaleDeformableAttention import OK') \
     else \
         if [ "${BUILD_OPS_AT_BUILD:-0}" = "1" ]; then \
             echo "BUILD_OPS_AT_BUILD=1 but nvcc not found in base image; failing build" >&2; \
