@@ -16,6 +16,10 @@ echo "Patching sources in $PATCH_DIR"
 # Remove DOS carriage returns if present
 find "$PATCH_DIR" -type f -print0 | xargs -0 -r sed -i 's/\r$//' || true
 
+# Remove any stale build artifacts from previous runs (including cpython-38 outputs)
+rm -rf "$PATCH_DIR"/maskdino/modeling/pixel_decoder/ops/build* || true
+find "$PATCH_DIR" -type f -name '*cpython-38*' -print -delete || true
+
 # Replace deprecated .type().is_cuda() usages
 find "$PATCH_DIR" -type f \( -name "*.cu" -o -name "*.cuh" -o -name "*.h" -o -name "*.cpp" \) -print0 \
   | xargs -0 -r sed -i 's/\.type()\.is_cuda()/\.is_cuda()/g' || true
