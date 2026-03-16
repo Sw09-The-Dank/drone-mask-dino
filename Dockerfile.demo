@@ -51,6 +51,11 @@ RUN set -eux; \
 # Copy repository into image (demo expects MaskDINO/ and configs present)
 COPY . /workspace
 
+# Ensure the workspace and embedded MaskDINO package are on PYTHONPATH so imports
+# like `from MaskDINO.maskdino.config import ...` resolve when running from the
+# mounted repository root.
+ENV PYTHONPATH=/workspace/MaskDINO:/workspace:${PYTHONPATH:-}
+
 ## Install detectron2 (prefer local source) and common extras before ops build
 RUN set -eux; \
     # ensure pip tools are up to date
