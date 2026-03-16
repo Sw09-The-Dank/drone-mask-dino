@@ -157,7 +157,9 @@ class Trainer(DefaultTrainer):
                 SemSegEvaluator(dataset_name, distributed=True, output_dir=output_folder)
             )
         if evaluator_type == "coco":
-            evaluator_list.append(COCOEvaluator(dataset_name, output_dir=output_folder))
+            # Enable distributed evaluation so worker processes contribute
+            # predictions and results are aggregated across the cluster.
+            evaluator_list.append(COCOEvaluator(dataset_name, output_dir=output_folder, distributed=True))
         if evaluator_type in [
             "coco_panoptic_seg",
             "ade20k_panoptic_seg",
@@ -165,13 +167,19 @@ class Trainer(DefaultTrainer):
             "mapillary_vistas_panoptic_seg",
         ]:
             if cfg.MODEL.MaskDINO.TEST.PANOPTIC_ON:
-                evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
+                # Aggregate panoptic evaluation across distributed workers
+                evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder, distributed=True))
         if evaluator_type == "coco_panoptic_seg" and cfg.MODEL.MaskDINO.TEST.INSTANCE_ON:
             evaluator_list.append(COCOEvaluator(dataset_name, output_dir=output_folder))
         if evaluator_type == "coco_panoptic_seg" and cfg.MODEL.MaskDINO.TEST.SEMANTIC_ON:
             evaluator_list.append(SemSegEvaluator(dataset_name, distributed=True, output_dir=output_folder))
         if evaluator_type == "mapillary_vistas_panoptic_seg" and cfg.MODEL.MaskDINO.TEST.INSTANCE_ON:
-            evaluator_list.append(InstanceSegEvaluator(dataset_name, output_dir=output_folder))
+            # InstanceSegEvaluator from MaskDINO may accept distributed flag in newer versions;
+            # if it does, pass `distributed=True` to ensure proper aggregation.
+            try:
+                evaluator_list.append(InstanceSegEvaluator(dataset_name, output_dir=output_folder, distributed=True))
+            except TypeError:
+                evaluator_list.append(InstanceSegEvaluator(dataset_name, output_dir=output_folder))
         if evaluator_type == "mapillary_vistas_panoptic_seg" and cfg.MODEL.MaskDINO.TEST.SEMANTIC_ON:
             evaluator_list.append(SemSegEvaluator(dataset_name, distributed=True, output_dir=output_folder))
         if evaluator_type == "cityscapes_instance":
