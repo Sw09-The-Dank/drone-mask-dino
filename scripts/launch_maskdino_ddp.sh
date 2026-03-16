@@ -68,7 +68,7 @@ python -m torch.distributed.run \
   --node_rank=${NODE_RANK} \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
-  scripts/launch_maskdino.py -- "${EXTRA_ARGS[@]}"
+  train_maskdino.py -- "${EXTRA_ARGS[@]}"
 
 EXIT_STATUS=$?
 echo "MaskDINO DDP launcher exited with status ${EXIT_STATUS}"
