@@ -56,6 +56,11 @@ for LIST in "${TRY_LISTS[@]}"; do
     # ensure the installed artifact is the one for the active python
     python -m pip uninstall -y MultiScaleDeformableAttention || true
     python -m pip install . || true
+    # Clean up helper shell scripts that are no longer needed at runtime
+    echo "Cleaning up temporary helper scripts"
+    rm -f /workspace/scripts/build_ops_in_image.sh /workspace/scripts/build_ops_check.sh || true
+    rm -f /workspace/build_ops.sh /workspace/prepare_patch.sh || true
+    # leave build_make.sh in place
     exit 0
   else
     echo "make.sh failed with $LIST (rc=$RC)"

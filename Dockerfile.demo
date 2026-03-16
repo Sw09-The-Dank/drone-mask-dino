@@ -64,7 +64,7 @@ RUN set -eux; \
 
 # Make the provided helper executable
 COPY build_ops.sh /workspace/build_ops.sh
-RUN chmod +x /workspace/build_ops.sh || true
+RUN chmod +x /workspace/build_ops.sh 
 
 # Optionally compile CUDA ops during image build. This requires a devel base image
 # that includes the CUDA toolkit (nvcc). Build with `--build-arg BUILD_OPS_AT_BUILD=1`
@@ -76,14 +76,16 @@ RUN chmod +x /workspace/build_ops.sh || true
 COPY prepare_patch.sh /workspace/prepare_patch.sh
 COPY build_make.sh /workspace/build_make.sh
 COPY create_shims.py /workspace/create_shims.py
-RUN chmod +x /workspace/prepare_patch.sh /workspace/build_make.sh || true
+RUN chmod +x /workspace/prepare_patch.sh /workspace/build_make.sh 
 
-# Run the steps in sequence; failures will show which step failed and exit non-zero.
-RUN /workspace/prepare_patch.sh && /workspace/build_make.sh && python3 /workspace/create_shims.py || true
+# Run the steps in sequence; normalize line endings and invoke with bash so
+# CRLF shebangs don't break in Linux build environments.
+RUN set -eux; \
+    sed -i 's/\r$//' /workspace/prepare_patch.sh /workspace/build_make.sh /workspace/create_shims.py || true; \
+    sed -i 's/\r$//' /workspace/scripts/*.sh || true; \
+    chmod +x /workspace/prepare_patch.sh /workspace/build_make.sh /workspace/scripts/*.sh || true; \
+    /bin/bash /workspace/prepare_patch.sh && /bin/bash /workspace/build_make.sh && python3 /workspace/create_shims.py
 
-# Note: building CUDA extensions (MSDeformAttn) may need to be run inside the
-# container where the host CUDA toolkit is available. To compile at runtime:
-#    /workspace/build_ops.sh
 
 # Default command runs the demo; override as needed
 COPY docker-entrypoint.sh /workspace/docker-entrypoint.sh
@@ -92,143 +94,3 @@ RUN chmod +x /workspace/docker-entrypoint.sh || true
 ENTRYPOINT ["/workspace/docker-entrypoint.sh"]
 CMD ["python","MaskDINO/demo/demo.py","--config-file","/workspace/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"]
 
-
-# # Allow selecting the base image at build time so the Dockerfile works
-# # on different host architectures (amd64 for CUDA GPU images, arm64/CPU
-# # images for non-GPU platforms). Override with `--build-arg BASE_IMAGE=...`.
-# ARG BASE_IMAGE=nvidia/cuda:13.1.1-devel-ubuntu24.04
-# ARG TARGETPLATFORM
-# ARG TARGETARCH
-# # Allow overriding the Miniconda installer for different CPU architectures
-# ARG CONDA_INSTALLER_URL=https://repo.anaconda.com/miniconda/Miniconda3-py38_4.9.2-Linux-x86_64.sh
-# ARG INSTALL_CUDA_TOOLKIT=1
-# ARG CUDA_VERSION=13.1
-# # Ensure the base image is pulled for the requested target platform so buildx
-# # doesn't default to an amd64 variant on arm64 hosts.
-# FROM --platform=${TARGETPLATFORM} ${BASE_IMAGE}
-
-# # Re-declare build args so they're available after the FROM instruction
-# ARG BASE_IMAGE
-# ARG TARGETPLATFORM
-# ARG TARGETARCH
-# ARG INSTALL_CUDA_TOOLKIT
-# ARG CUDA_VERSION
-# ARG CONDA_INSTALLER_URL
-
-# ENV DEBIAN_FRONTEND=noninteractive
-# ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib:/usr/local/cuda/lib64
-# ENV CUDA_HOME=/usr/local/cuda
-# ENV TORCH_CUDA_ARCH_LIST="13.1;13.0;12.1+PTX;8.6;8.0;7.5"
-# SHELL ["/bin/bash", "-lc"]
-# WORKDIR /workspace
-
-# # Copy requirements for caching
-# COPY requirements.txt /workspace/requirements.txt
-# COPY MaskDINO/requirements.txt /workspace/MaskDINO-requirements.txt
-
-# # Minimal system deps for runtime
-# # Remove NVIDIA/CUDA apt lists (they cause NO_PUBKEY errors in some base images),
-# # then install minimal packages.
-# RUN set -eux; \
-#     echo "Building on target platform: ${TARGETPLATFORM:-local} (${TARGETARCH:-unknown}) using base image: ${BASE_IMAGE:-unknown}"; \
-#     rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia* || true; \
-#     apt-get update && apt-get install -y --no-install-recommends \
-#         wget bzip2 ca-certificates libgl1 gnupg dirmngr git build-essential cmake python3-dev ninja-build \
-#         pkg-config libhdf5-dev && \
-#     if [ "${INSTALL_CUDA_TOOLKIT:-0}" = "1" ] && [ "${TARGETARCH:-}" = "arm64" ]; then \
-#         # Run CUDA toolkit install in a tolerant subshell: failures here are non-fatal
-#         ( \
-#             set +e; \
-#             echo "Installing CUDA toolkit ${CUDA_VERSION} for arm64"; \
-#             wget -qO /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/aarch64/cuda-keyring_1.0-1_all.deb; \
-#             dpkg -i /tmp/cuda-keyring.deb || echo "Warning: dpkg -i cuda-keyring failed; continuing"; \
-#             rm -f /tmp/cuda-keyring.deb; \
-#             apt-get update || echo "apt-get update failed after adding cuda keyring; continuing"; \
-#             apt-get install -y --no-install-recommends cuda-toolkit-$(echo ${CUDA_VERSION} | tr '.' '-') || \
-#             echo "CUDA toolkit ${CUDA_VERSION} not available via apt for this architecture; skipping install"; \
-#         ); \
-#     fi; \
-#     rm -rf /var/lib/apt/lists/*
-
-# # Install Miniconda (skip if already present in base image)
-# ENV CONDA_DIR=/opt/conda
-# RUN set -eux; \
-#     # Choose architecture-appropriate Miniconda installer when needed. If the
-#     # user provided an explicit CONDA_INSTALLER_URL, prefer it unless it points
-#     # to an x86_64 binary while building for arm64.
-#     installer="${CONDA_INSTALLER_URL}"; \
-#     if [ "${TARGETARCH:-}" = "arm64" ] && echo "${installer}" | grep -q "x86_64"; then \
-#         installer="https://repo.anaconda.com/miniconda/Miniconda3-py38_4.9.2-Linux-aarch64.sh"; \
-#     fi; \
-#     if [ ! -d "${CONDA_DIR}" ]; then \
-#         wget -qO /tmp/miniconda.sh "${installer}"; \
-#         bash /tmp/miniconda.sh -b -p "${CONDA_DIR}"; \
-#         rm /tmp/miniconda.sh; \
-#     else \
-#         echo "Conda already installed at ${CONDA_DIR}, skipping install"; \
-#     fi; \
-#     "${CONDA_DIR}"/bin/conda clean -ya || true
-
-# # Create runtime env and install Python deps (MaskDINO + repo requirements)
-# RUN set -eux; \
-#     ${CONDA_DIR}/bin/conda create -y -n maskdino python=3.8
-
-# RUN set -eux; \
-#     echo "Upgrading pip/setuptools/wheel in maskdino env"; \
-#     ${CONDA_DIR}/bin/conda run -n maskdino pip install --upgrade pip setuptools wheel
-
-# # Install CUDA-enabled PyTorch early so dependent packages pick up a GPU-enabled
-# # torch and do not replace it later.
-# RUN set -eux; \
-#     echo "Installing CUDA-enabled PyTorch (GPU) into maskdino env"; \
-#     if [ "${TARGETARCH:-}" = "arm64" ]; then \
-#         echo "Detected arm64: installing wheel-based PyTorch (cu130) via pip"; \
-#         ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-deps --index-url https://download.pytorch.org/whl/cu130 \ 
-#             "torch==2.0.1" "torchvision==0.17.0" "torchaudio==2.2.0" || (echo "pip install of torch wheel failed" && exit 1); \
-#     else \
-#         echo "Detected x86_64: installing with conda using MaskDINO recommended versions"; \
-#         ${CONDA_DIR}/bin/conda run -n maskdino conda install -y -c pytorch -c nvidia pytorch==1.9.0 torchvision==0.10.0 cudatoolkit=11.1 || (echo "conda install of torch failed" && exit 1); \
-#     fi
-
-# # Note: we postpone ensuring a CUDA-enabled PyTorch until after installing
-# # repo requirements so that pip/requirements don't overwrite the GPU wheel.
-
-# RUN set -eux; \
-#     echo "Installing opencv-python"; \
-#     ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-cache-dir -U opencv-python
-
-# RUN set -eux; \
-#     echo "Installing repo Python requirements"; \
-#     ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-cache-dir -r /workspace/requirements.txt -r /workspace/MaskDINO-requirements.txt; \
-#     echo "Pinning pillow and scikit-image for compatibility"; \
-#     ${CONDA_DIR}/bin/conda run -n maskdino python -m pip install --no-cache-dir 'pillow==9.4.0' 'scikit-image==0.20.0'; \
-#     \
-#     echo "Installing detectron2 from source to match PyTorch/CUDA"; \
-#     ${CONDA_DIR}/bin/conda run -n maskdino pip install --no-cache-dir 'git+https://github.com/facebookresearch/detectron2.git'
-
-# # Use the conda env Python by default
-# ENV PATH=${CONDA_DIR}/envs/maskdino/bin:${PATH}
-# ENV CONDA_DEFAULT_ENV=maskdino
-
-# # Copy repository (demo expects MaskDINO/ and configs present)
-# COPY . /workspace
-
-
-# # NOTE: Building CUDA extensions inside the image can fail when the build
-# # toolchain or CUDA target list doesn't match the host GPU / driver.
-# # We skip compiling the MultiScaleDeformableAttention op at image-build time.
-# # To compile it later (inside the container where nvcc/toolchain are available),
-# # run `/workspace/build_ops.sh` after starting the container and ensuring
-# # the host's CUDA toolkit is accessible.
-# COPY build_ops.sh /workspace/build_ops.sh
-# RUN chmod +x /workspace/build_ops.sh
-
-# # Try compiling CUDA ops during image build (non-fatal). If it fails,
-# # the container can build at runtime using /workspace/build_ops.sh.
-# RUN set -eux; \
-#     echo "Attempting to compile CUDA ops at image build time (may fail)"; \
-#     # Ensure CUDA paths are exported inside the conda-run subshell so nvcc is visible
-#     ${CONDA_DIR}/bin/conda run -n maskdino bash -lc "export CUDA_HOME=/usr/local/cuda && export PATH=/usr/local/cuda/bin:$PATH && /workspace/build_ops.sh" || echo "build_ops.sh failed during image build; will compile at runtime if needed"
-
-# # Default command: run the MaskDINO demo script. Override with container args if needed.
-# CMD ["/opt/conda/envs/maskdino/bin/python","MaskDINO/demo/demo.py","--config-file","/workspace/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"]
