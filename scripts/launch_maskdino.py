@@ -18,11 +18,11 @@ import tempfile
 
 def main():
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--train-json", default=None)
-    parser.add_argument("--val-json", default=None)
-    parser.add_argument("--images-root", default=None,
+    parser.add_argument("--train-json", default="/workspace/output_annotations/train_polygons_clean.json")
+    parser.add_argument("--val-json", default="/workspace/output_annotations/val_polygons_clean.json")
+    parser.add_argument("--images-root", default="/workspace/dataset/images/train",
                         help="Images root for train dataset (used if --val-images-root not provided)")
-    parser.add_argument("--val-images-root", default=None,
+    parser.add_argument("--val-images-root", default="/workspace/dataset/images/val",
                         help="Images root for validation dataset (optional, defaults to --images-root)")
     parser.add_argument("--from-scratch", action="store_true",
                         help="If set, clear MODEL.WEIGHTS to train from random init and infer number of classes from --train-json")
@@ -44,7 +44,7 @@ def main():
                         help="Apply an aggressive low-memory preset (smaller test size, very few queries/points)"
                         )
     parser.add_argument("--resume", action='store_true', help="Resume from last checkpoint (forwarded to train_net.py)")
-    parser.add_argument("--output", default=None,
+    parser.add_argument("--output", default="/workspace/output",
                         help="Optional output directory to set as OUTPUT_DIR for MaskDINO")
     # parse known so we keep the rest for MaskDINO.train_net
     args, rest = parser.parse_known_args()
