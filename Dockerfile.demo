@@ -91,9 +91,15 @@ RUN set -eux; \
 
 
 # Default command runs the demo; override as needed
+# Copy entrypoint into the workspace for convenience and also bake a copy
+# into `/usr/local/bin` so host bind-mounting `/workspace` cannot clobber
+# the executable the image expects to run as the container entrypoint.
 COPY docker-entrypoint.sh /workspace/docker-entrypoint.sh
-RUN chmod +x /workspace/docker-entrypoint.sh 
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /workspace/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-ENTRYPOINT ["/workspace/docker-entrypoint.sh"]
+# Use the baked entrypoint in `/usr/local/bin` to avoid permission/overwrite
+# issues when the host mounts the repo over `/workspace` at runtime.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python","MaskDINO/demo/demo.py","--config-file","/workspace/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"]
 
