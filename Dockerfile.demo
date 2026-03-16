@@ -68,6 +68,14 @@ RUN set -eux; \
     python -m pip install git+https://github.com/cocodataset/panopticapi.git; \
     python -m pip install git+https://github.com/mcordts/cityscapesScripts.git
 
+## Make MaskDINO importable during build and ensure pip build steps use the
+## active environment (so torch is available during build-wheel for ops).
+ENV PIP_NO_BUILD_ISOLATION=1
+RUN set -eux; \
+    if [ -d /workspace/MaskDINO ]; then \
+        python -m pip install --no-deps --no-build-isolation -e /workspace/MaskDINO || true; \
+    fi
+
 ## Compiled CUDA ops should be built at runtime with `/workspace/build_ops.sh` if needed
 
 # Make the provided helper executable
