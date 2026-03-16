@@ -281,7 +281,44 @@ def main():
         train_path = root_train
     else:
         train_path = os.path.join(maskdino_pkg_dir, "train_net.py")
-    runpy.run_path(train_path, run_name="__main__")
+
+    # If we're already running under torch.distributed.run (torchrun) the
+    # environment will have WORLD_SIZE/LOCAL_RANK/RANK set. In that case we
+    # should NOT call the `__main__` entrypoint of train_net.py because it
+    # itself calls `launch(...)` which spawns another set of processes. Instead
+    # import the module and call its `main()` directly with a parsed args
+    # namespace so the already-spawned worker participates in distributed
+    # training as intended.
+    already_launched = False
+    try:
+        ws = int(os.environ.get('WORLD_SIZE', os.environ.get('WORLD_SIZE', '1')))
+        lr = os.environ.get('LOCAL_RANK') is not None or os.environ.get('LOCAL_RANK', '') != ''
+        if ws > 1 or os.environ.get('RANK') is not None or os.environ.get('LOCAL_RANK') is not None:
+            already_launched = True
+    except Exception:
+        already_launched = False
+
+    if already_launched:
+        # Build an args.Namespace using detectron2's default parser so train_net.main
+        # receives the expected attributes.
+        try:
+            from detectron2.engine import default_argument_parser
+            import importlib.util
+            parser = default_argument_parser()
+            # rest contains flags for train_net; append dataset_overrides which are cfg overrides
+            full_argv = rest + dataset_overrides
+            args = parser.parse_args(full_argv)
+            # Ensure config-file is present in args (launch expects it)
+            if not getattr(args, 'config_file', None):
+                args.config_file = None
+            # Import MaskDINO.train_net and call main(args)
+            import MaskDINO.train_net as maskdino_train
+            maskdino_train.main(args)
+        except Exception:
+            # Fallback: execute the script file without spawning new processes
+            runpy.run_path(train_path, run_name="__main__")
+    else:
+        runpy.run_path(train_path, run_name="__main__")
 
 
 if __name__ == "__main__":
