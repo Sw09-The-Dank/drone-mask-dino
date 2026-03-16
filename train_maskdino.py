@@ -30,7 +30,17 @@ from detectron2.engine import DefaultTrainer, default_setup, launch
 from detectron2.utils.logger import setup_logger
 
 # MaskDINO helpers
-from maskdino.config import add_maskdino_config
+try:
+    # Preferred path when the repository root is on PYTHONPATH
+    from MaskDINO.maskdino.config import add_maskdino_config
+except Exception:
+    try:
+        # Fallback to direct package import if available
+        from maskdino.config import add_maskdino_config
+    except Exception:
+        raise ImportError(
+            "Could not import `add_maskdino_config` from MaskDINO; ensure the MaskDINO package is on PYTHONPATH or that you're running from the repository root."
+        )
 from detectron2.evaluation import (
     COCOEvaluator,
     COCOPanopticEvaluator,
@@ -213,6 +223,19 @@ def main():
             "SOLVER.IMS_PER_BATCH", "1",
         ]
         dataset_overrides.extend(aggressive)
+
+    # If no config-file was provided, prefer the repo root config so users
+    # can run the script from the workspace without explicitly passing it.
+    if not args.config_file:
+        candidates = [
+            os.path.join(os.getcwd(), "maskdino_drone_config.yaml"),
+            os.path.join(os.getcwd(), "config.yaml"),
+        ]
+        for c in candidates:
+            if os.path.isfile(c):
+                args.config_file = c
+                print(f"Defaulting --config-file to {c}")
+                break
 
     # Build final argv to pass to MaskDINO.train_net.main via detectron2 parser
     try:
