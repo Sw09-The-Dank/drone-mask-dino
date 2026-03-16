@@ -317,20 +317,44 @@ docker run --gpus all --rm -it --ipc=host --ulimit memlock=-1 --ulimit stack=671
 
 
 
-
-
-
-
-
-
-
-
-
-
 docker run --gpus all --rm -it --ipc=host --ulimit memlock=-1 --shm-size=16g --ulimit stack=67108864 -v "%CD%:/workspace" --entrypoint /bin/bash maskdino-demo:latest -c "cd /workspace && python scripts/launch_maskdino.py --train-json /workspace/output_annotations/train_polygons_clean.json --val-json /workspace/output_annotations/val_polygons_clean.json --images-root /workspace/dataset/images/train --val-images-root /workspace/dataset/images/val --fix-json-root --from-scratch --max-iter 100 --base-lr 5e-05 --num-workers 4 --ims-per-batch 1 --resume --low-mem-eval-aggressive --num-gpus 1 --output /workspace/output MODEL.MaskDINO.NUM_OBJECT_QUERIES 50 MODEL.MaskDINO.TRAIN_NUM_POINTS 1024 INPUT.MIN_SIZE_TEST 600 INPUT.MAX_SIZE_TEST 800 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 64"
 
 
 
 This does not eat ram on eval:
 
-docker run --gpus all --rm -it --ipc=host --ulimit memlock=-1 --shm-size=16g -v "%CD%:/workspace" --entrypoint /bin/bash maskdino-demo:latest -c "cd /workspace && python scripts/launch_maskdino.py --train-json /workspace/output_annotations/train_polygons_clean.json --val-json /workspace/output_annotations/val_polygons_clean.json --images-root /workspace/dataset/images/train --val-images-root /workspace/dataset/images/val --fix-json-root --max-iter 100 --base-lr 5e-05 --resume --output /workspace/output MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 MODEL.MaskDINO.TRAIN_NUM_POINTS 256 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 32 TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 TEST.DETECTIONS_PER_IMAGE 8 --config-file maskdino_drone_config.yaml" 
+docker run --gpus all --rm -it --ipc=host --ulimit memlock=-1 --shm-size=16g -v "%CD%:/workspace" --entrypoint /bin/bash maskdino-demo:latest -c "cd /workspace && python scripts/launch_maskdino.py  --fix-json-root --max-iter 10 --base-lr 5e-05 --resume MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 TEST.DETECTIONS_PER_IMAGE 8 --config-file maskdino_drone_config.yaml" 
+
+
+docker run --gpus all --rm -it --ipc=host --ulimit memlock=-1 --shm-size=16g -v "%CD%:/workspace" --entrypoint /bin/bash maskdino-demo:latest -c "cd /workspace && bash ./scripts/launch_maskdino_ddp.sh 1 8 0 127.0.0.1 29500 --fix-json-root --max-iter 10 --base-lr 5e-05 --resume --output /workspace/output MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 MODEL.MaskDINO.TRAIN_NUM_POINTS 256 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 32 TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 8 --config-file maskdino_drone_config.yaml"
+
+
+master
+```bash
+sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
+  -v "$(pwd):/workspace" -w /workspace \
+  drone-maskdino:latest \
+  /bin/bash -lc "
+    bash ./scripts/launch_maskdino_ddp.sh 2 1 0 169.254.18.231 29500 --fix-json-root --max-iter 10 --base-lr 5e-05 --resume --output /workspace/output MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 MODEL.MaskDINO.TRAIN_NUM_POINTS 256 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 32 TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 8 --config-file maskdino_drone_config.yaml"
+  "
+```
+
+worker
+```bash
+sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
+  -v "$(pwd):/workspace" -w /workspace \
+  drone-maskdino:latest \
+  /bin/bash -lc "
+    bash ./scripts/launch_maskdino_ddp.sh 2 1 1 169.254.18.231 29500 --fix-json-root --max-iter 10 --base-lr 5e-05 --resume --output /workspace/output MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 MODEL.MaskDINO.TRAIN_NUM_POINTS 256 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 32 TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 8 --config-file maskdino_drone_config.yaml"
+  "
+```
