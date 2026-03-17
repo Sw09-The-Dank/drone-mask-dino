@@ -271,7 +271,32 @@ def main():
         cfg = get_cfg()
         add_maskdino_config(cfg)
         if parsed_args.config_file:
-            cfg.merge_from_file(parsed_args.config_file)
+                # Detect and pre-create any missing config nodes referenced in
+                # the config file to avoid KeyError on merge (some configs may
+                # reference keys added by external modules).
+                try:
+                    cfg.merge_from_file(parsed_args.config_file)
+                except KeyError as e:
+                    try:
+                        import yaml
+
+                        def _ensure_nodes(node, data):
+                            from detectron2.config import CfgNode as CN
+
+                            if not isinstance(data, dict):
+                                return
+                            for k, v in data.items():
+                                if not hasattr(node, k):
+                                    setattr(node, k, CN())
+                                _ensure_nodes(getattr(node, k), v)
+
+                        with open(parsed_args.config_file, "r") as _cf:
+                            cfg_dict = yaml.safe_load(_cf)
+                        _ensure_nodes(cfg, cfg_dict)
+                        cfg.merge_from_file(parsed_args.config_file)
+                    except Exception:
+                        # Re-raise original error if we cannot recover
+                        raise e
         # parsed_args comes from detectron2 default parser and contains `opts`
         if hasattr(parsed_args, "opts") and parsed_args.opts:
             cfg.merge_from_list(parsed_args.opts)
