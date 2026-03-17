@@ -63,7 +63,7 @@ echo "NCCL_DEBUG=${NCCL_DEBUG}, NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}, NCCL_I
 
 # Force PYTHONPATH to the workspace root so the repository copy of MaskDINO
 # is used by all worker processes (prevents duplicate dataset registration).
-export PYTHONPATH=/workspace
+export PYTHONPATH=/workspace/MaskDINO:/workspace${PYTHONPATH:+:}$PYTHONPATH
 echo "PYTHONPATH=${PYTHONPATH}"
 
 # Run torch distributed launcher (torch.distributed.run) and execute the MaskDINO launcher
