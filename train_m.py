@@ -627,15 +627,36 @@ if __name__ == "__main__":
         # Create Detectron2's local process group so comm.get_local_rank()
         # and related utilities work (required by create_ddp_model).
         try:
-            # torch.distributed.run sets LOCAL_WORLD_SIZE for per-node procs
-            local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", os.environ.get("LOCAL_SIZE", "1")))
-            if local_world_size > 1:
+            # Prefer torchrun's per-node count; fall back to WORLD_SIZE when missing.
+            try:
+                local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", None) or os.environ.get("LOCAL_SIZE", None) or 0)
+            except Exception:
+                local_world_size = 0
+            try:
+                global_world_size = int(os.environ.get("WORLD_SIZE", "1"))
+            except Exception:
+                global_world_size = 1
+
+            # If LOCAL_WORLD_SIZE is not provided, attempt to infer per-node
+            # worker count from global world size and visible CUDA devices.
+            if local_world_size <= 0:
                 try:
-                    comm.create_local_process_group(local_world_size)
+                    local_world_size = torch.cuda.device_count() if torch.cuda.is_available() else 1
                 except Exception:
-                    # best-effort; proceed even if creation fails
-                    pass
+                    local_world_size = 1
+
+            should_create = (local_world_size > 1) or (global_world_size > 1)
+            if should_create:
+                try:
+                    print(f"[DDP] creating local process group: local_world_size={local_world_size} global_world_size={global_world_size} LOCAL_WORLD_SIZE={os.environ.get('LOCAL_WORLD_SIZE')} LOCAL_RANK={os.environ.get('LOCAL_RANK')}")
+                    comm.create_local_process_group(local_world_size)
+                    print("[DDP] detectron2 local process group created")
+                except Exception as e:
+                    # Log and re-raise to make failure visible rather than silently
+                    print("[DDP] failed to create detectron2 local process group:", repr(e))
+                    raise
         except Exception:
+            # If anything goes wrong here, surface the error later during model creation
             pass
         print("Detected torchrun / torch.distributed.run environment.")
         print("Command Line Args:", args)
