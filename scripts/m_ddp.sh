@@ -63,8 +63,8 @@ echo "Launching DDP: nnodes=${NNODES}, nproc_per_node=${NPROC_PER_NODE}, node_ra
 echo "NCCL_DEBUG=${NCCL_DEBUG}, NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}, NCCL_IB_DISABLE=${NCCL_IB_DISABLE}, NCCL_P2P_LEVEL=${NCCL_P2P_LEVEL}, NCCL_SOCKET_RETRY_CNT=${NCCL_SOCKET_RETRY_CNT}, NCCL_SOCKET_RETRY_SLEEP_MSEC=${NCCL_SOCKET_RETRY_SLEEP_MSEC}, NCCL_NET_GDR_LEVEL=${NCCL_NET_GDR_LEVEL}, NCCL_IB_HCA=${NCCL_IB_HCA}"
 
 # Force PYTHONPATH to workspace so repository MaskDINO is used by workers
-# export PYTHONPATH=/workspace/MaskDINO:/workspace${PYTHONPATH:+:}$PYTHONPATH
-# echo "PYTHONPATH=${PYTHONPATH}"
+export PYTHONPATH=/workspace/MaskDINO:/workspace${PYTHONPATH:+:}$PYTHONPATH
+echo "PYTHONPATH=${PYTHONPATH}"
 
 # Run torch.distributed.run (torchrun) and execute the root-level train wrapper
 python -m torch.distributed.run \

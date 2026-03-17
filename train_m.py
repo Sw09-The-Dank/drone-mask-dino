@@ -401,6 +401,19 @@ def setup(args):
             cfg.TEST.EVAL_PERIOD = 0
     except Exception:
         pass
+    # Log basic distributed/runtime info to help debug multi-node divergence
+    try:
+        import socket
+        rank = int(os.environ.get("RANK", -1))
+        local_rank = int(os.environ.get("LOCAL_RANK", -1))
+        world_size = int(os.environ.get("WORLD_SIZE", -1))
+        print(f"[DDP] host={socket.gethostname()} rank={rank} local_rank={local_rank} world_size={world_size}")
+        try:
+            print(f"[DDP] config_file={args.config_file} OUTPUT_DIR={getattr(cfg, 'OUTPUT_DIR', None)} DATASETS.TRAIN={getattr(cfg, 'DATASETS', None)}")
+        except Exception:
+            pass
+    except Exception:
+        pass
     cfg.freeze()
     default_setup(cfg, args)
     setup_logger(output=cfg.OUTPUT_DIR, distributed_rank=comm.get_rank(), name="maskdino")
