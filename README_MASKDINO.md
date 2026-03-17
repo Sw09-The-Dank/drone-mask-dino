@@ -409,7 +409,7 @@ sudo docker run --gpus all --rm -it \
   --ipc=host \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
-  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
+  -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
   -v "$(pwd):/workspace" -w /workspace \
   maskdino-demo:latest \
   /bin/bash -lc "
