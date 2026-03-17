@@ -19,6 +19,13 @@ import runpy
 import sys
 import tempfile
 
+# Ensure repository MaskDINO package is importable early so any config nodes
+# it registers are present before Detectron2/config imports. This mirrors
+# `scripts/launch_maskdino.py` behavior and prevents merge KeyErrors.
+maskdino_pkg_dir = os.path.join(os.getcwd(), "MaskDINO")
+if maskdino_pkg_dir not in sys.path:
+    sys.path.insert(0, maskdino_pkg_dir)
+
 import random
 import logging
 
