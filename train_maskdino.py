@@ -278,63 +278,75 @@ def main():
         cfg = get_cfg()
         add_maskdino_config(cfg)
         if parsed_args.config_file:
-                # Load the config YAML and prune any top-level keys that don't
-                # exist in the current base `cfg`. This avoids KeyError for keys
-                # introduced by other projects or newer Detectron2 versions.
+            # Merge the provided YAML into the base cfg. Older/newer Detectron2
+            # versions sometimes lack config nodes referenced by external YAMLs
+            # which causes KeyError on merge. Rather than pruning user settings,
+            # create missing CfgNode placeholders so the YAML can be fully
+            # applied and the model/config remains intact.
+            try:
+                cfg.merge_from_file(parsed_args.config_file)
+            except KeyError:
+                # Attempt to create missing keys from the YAML structure, then
+                # re-merge so all settings are preserved.
                 try:
                     import yaml
+                    from detectron2.config import CfgNode as CN
 
                     with open(parsed_args.config_file, "r") as _cf:
                         cfg_dict = yaml.safe_load(_cf) or {}
 
-                    pruned_keys = []
-
-                    def _prune(node, d, prefix=""):
-                        # node: CfgNode or object; d: dict
-                        from detectron2.config import CfgNode as CN
-
+                    def _ensure(node, d):
                         if not isinstance(d, dict):
                             return
-                        for k in list(d.keys()):
-                            full_key = f"{prefix}.{k}" if prefix else k
+                        for k, v in d.items():
                             if not hasattr(node, k):
-                                # unknown key -> remove it and record path
-                                pruned_keys.append(full_key)
-                                del d[k]
-                            else:
-                                v = d.get(k)
-                                try:
-                                    child = getattr(node, k)
-                                except Exception:
-                                    pruned_keys.append(full_key)
-                                    del d[k]
-                                    continue
-                                if isinstance(v, dict):
-                                    _prune(child, v, full_key)
+                                setattr(node, k, CN())
+                            try:
+                                child = getattr(node, k)
+                            except Exception:
+                                # If we cannot attach, skip creating children
+                                continue
+                            if isinstance(v, dict):
+                                _ensure(child, v)
 
-                    _prune(cfg, cfg_dict)
-
-                    # Warn if any keys were pruned so user can review
-                    if pruned_keys:
-                        import sys
-                        msg = f"Pruned unknown config keys from {parsed_args.config_file}: {pruned_keys}"
-                        try:
-                            logging.getLogger("maskdino").warning(msg)
-                        except Exception:
-                            pass
-                        print(msg, file=sys.stderr)
-
-                    # Write pruned config to a temp file and merge
-                    tf = tempfile.NamedTemporaryFile(delete=False, suffix=".yaml")
-                    with open(tf.name, "w") as _wf:
-                        yaml.safe_dump(cfg_dict, _wf)
-                    cfg.merge_from_file(tf.name)
-                except KeyError:
-                    # If pruning didn't help, re-raise to surface the original problem
-                    raise
-                except Exception:
-                    # As a last resort, try the original merge (so errors are visible)
+                    _ensure(cfg, cfg_dict)
+                    # Now merge the original YAML (placeholders prevent KeyError)
                     cfg.merge_from_file(parsed_args.config_file)
+                except Exception:
+                    # Last resort: re-raise original error so user sees the failure
+                    cfg.merge_from_file(parsed_args.config_file)
+
+        # Compatibility: some older/newer Detectron2 builds don't support
+        # MaskDINO's custom `full_model` gradient clipping enum value. Map it
+        # to a supported value (conservative) while preserving the user's
+        # YAML (so they can re-enable it if they upgrade Detectron2).
+        try:
+            clip_type = None
+            if hasattr(cfg.SOLVER, "CLIP_GRADIENTS"):
+                clip_type = cfg.SOLVER.CLIP_GRADIENTS.get("CLIP_TYPE", None) if isinstance(cfg.SOLVER.CLIP_GRADIENTS, dict) else getattr(cfg.SOLVER.CLIP_GRADIENTS, "CLIP_TYPE", None)
+            # detect supported types
+            try:
+                from detectron2.solver.build import GradientClipType
+                supported = {t.name.lower() for t in GradientClipType}
+            except Exception:
+                supported = set()
+            if clip_type == "full_model" and "full_model" not in supported:
+                try:
+                    logging.getLogger("maskdino").warning("SOLVER.CLIP_GRADIENTS.CLIP_TYPE 'full_model' not supported by installed Detectron2; falling back to 'norm'")
+                except Exception:
+                    pass
+                # Map to a conservative supported type so optimizer construction succeeds
+                if isinstance(cfg.SOLVER.CLIP_GRADIENTS, dict):
+                    cfg.SOLVER.CLIP_GRADIENTS["CLIP_TYPE"] = "norm"
+                else:
+                    try:
+                        cfg.SOLVER.CLIP_GRADIENTS.CLIP_TYPE = "norm"
+                    except Exception:
+                        pass
+        except Exception:
+            # If anything goes wrong determining/supporting clip types,
+            # continue without modification and let Detectron2 surface errors.
+            pass
         # parsed_args comes from detectron2 default parser and contains `opts`
         if hasattr(parsed_args, "opts") and parsed_args.opts:
             cfg.merge_from_list(parsed_args.opts)

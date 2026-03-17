@@ -550,15 +550,31 @@ if __name__ == "__main__":
     except Exception:
         # if anything goes wrong, continue with original args
         pass
-    port = random.randint(1000, 20000)
-    args.dist_url = 'tcp://127.0.0.1:' + str(port)
-    print("Command Line Args:", args)
-    print("pwd:", os.getcwd())
-    launch(
-        main,
-        args.num_gpus,
-        num_machines=args.num_machines,
-        machine_rank=args.machine_rank,
-        dist_url=args.dist_url,
-        args=(args,),
-    )
+    # If this script is launched via `torchrun` / `torch.distributed.run`, the
+    # distributed environment variables (WORLD_SIZE / RANK / LOCAL_RANK) will be
+    # present and each process should call `main()` directly. Otherwise, use
+    # Detectron2's `launch()` helper to spawn local processes (and multi-node
+    # support when requested).
+    is_torchrun = any(k in os.environ for k in ("WORLD_SIZE", "RANK", "LOCAL_RANK"))
+    if is_torchrun:
+        # When launched by torchrun, the runtime has already initialized the
+        # per-process environment (LOCAL_RANK) and will execute this script
+        # once per process. Call `main()` directly so the per-process code
+        # runs (Detectron2/MaskDINO code uses detectron2.utils.comm internally).
+        print("Detected torchrun / torch.distributed.run environment.")
+        print("Command Line Args:", args)
+        print("pwd:", os.getcwd())
+        main(args)
+    else:
+        port = random.randint(1000, 20000)
+        args.dist_url = 'tcp://127.0.0.1:' + str(port)
+        print("Command Line Args:", args)
+        print("pwd:", os.getcwd())
+        launch(
+            main,
+            getattr(args, "num_gpus", 1),
+            num_machines=getattr(args, "num_machines", 1),
+            machine_rank=getattr(args, "machine_rank", 0),
+            dist_url=args.dist_url,
+            args=(args,),
+        )
