@@ -363,7 +363,7 @@ sudo docker run --gpus all --rm -it \
   -v "$(pwd):/workspace" -w /workspace \
   maskdino-demo:latest \
   /bin/bash -lc "
-    bash ./scripts/m_ddp.sh 2 1 0 169.254.18.231 29500 --fix-json-root --max-iter 10 --base-lr 5e-05 --from-scratch --output /workspace/output MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 MODEL.MaskDINO.TRAIN_NUM_POINTS 256 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 32 TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 8 --config-file MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"
+    bash ./scripts/m_ddp.sh 1 1 0 169.254.18.231 29500 --fix-json-root --max-iter 10 --base-lr 5e-05 --resume --output /workspace/output MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 MODEL.MaskDINO.TRAIN_NUM_POINTS 256 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 32 TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 8 --config-file MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"
   "
 ```
 
@@ -388,20 +388,34 @@ sudo docker run --gpus all --rm -it \
 Test:
 
 sudo docker run --gpus all --rm -it \
-  --network=host --ipc=host \
-  --ulimit memlock=-1 --ulimit stack=67108864 \
+  --network=host \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
   -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
-  -e PYTHONPATH=/workspace/MaskDINO \
   -v "$(pwd):/workspace" -w /workspace \
   maskdino-demo:latest \
-  /bin/bash -lc "bash ./scripts/launch_maskdino_ddp.sh 2 1 0 169.254.18.231 29500 --fix-json-root --max-iter 10 --base-lr 5e-05 --from-scratch --output /workspace/output MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 MODEL.MaskDINO.TRAIN_NUM_POINTS 256 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 32 TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 8 --config-file maskdino_drone_config.yaml"
+  /bin/bash -lc "
+    bash ./scripts/m_ddp.sh 1 1 0 169.254.18.231 29500 \
+      --fix-json-root --max-iter 10 --base-lr 5e-05 --resume --output /workspace/output \
+      --config-file maskdino_drone_config.yaml \
+      MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 MODEL.MaskDINO.TRAIN_NUM_POINTS 256 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 32 \
+      TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 8
+  "
 
 
-  sudo docker run --gpus all --rm -it \
-  --network=host --ipc=host \
-  --ulimit memlock=-1 --ulimit stack=67108864 \
-  -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
-  -e PYTHONPATH=/workspace/MaskDINO \
+sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
   -v "$(pwd):/workspace" -w /workspace \
   maskdino-demo:latest \
-  /bin/bash -lc "bash ./scripts/launch_maskdino_ddp.sh 2 1 1 169.254.18.231 29500 --fix-json-root --max-iter 10 --base-lr 5e-05 --from-scratch --output /workspace/output MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 MODEL.MaskDINO.TRAIN_NUM_POINTS 256 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 32 TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 8 --config-file maskdino_drone_config.yaml"
+  /bin/bash -lc "
+    bash ./scripts/m_ddp.sh 2 1 1 169.254.18.231 29500 \
+      --fix-json-root --max-iter 10 --base-lr 5e-05 --from-scratch --output /workspace/output \
+      --config-file MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml \
+      MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 MODEL.MaskDINO.TRAIN_NUM_POINTS 256 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 32 \
+      TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 8
+  "
