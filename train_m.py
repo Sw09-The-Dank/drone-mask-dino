@@ -624,6 +624,19 @@ if __name__ == "__main__":
                 dist.init_process_group(backend=backend, init_method="env://")
             except Exception:
                 pass
+        # Create Detectron2's local process group so comm.get_local_rank()
+        # and related utilities work (required by create_ddp_model).
+        try:
+            # torch.distributed.run sets LOCAL_WORLD_SIZE for per-node procs
+            local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", os.environ.get("LOCAL_SIZE", "1")))
+            if local_world_size > 1:
+                try:
+                    comm.create_local_process_group(local_world_size)
+                except Exception:
+                    # best-effort; proceed even if creation fails
+                    pass
+        except Exception:
+            pass
         print("Detected torchrun / torch.distributed.run environment.")
         print("Command Line Args:", args)
         print("pwd:", os.getcwd())
