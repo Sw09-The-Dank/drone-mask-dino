@@ -61,6 +61,15 @@ fi
 echo "Launching MaskDINO DDP: nnodes=${NNODES}, nproc_per_node=${NPROC_PER_NODE}, node_rank=${NODE_RANK}, master_addr=${MASTER_ADDR}, master_port=${MASTER_PORT}"
 echo "NCCL_DEBUG=${NCCL_DEBUG}, NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}, NCCL_IB_DISABLE=${NCCL_IB_DISABLE}, NCCL_P2P_LEVEL=${NCCL_P2P_LEVEL}, NCCL_SOCKET_RETRY_CNT=${NCCL_SOCKET_RETRY_CNT}, NCCL_SOCKET_RETRY_SLEEP_MSEC=${NCCL_SOCKET_RETRY_SLEEP_MSEC}, NCCL_NET_GDR_LEVEL=${NCCL_NET_GDR_LEVEL}, NCCL_IB_HCA=${NCCL_IB_HCA}"
 
+# Ensure the repository root is first on PYTHONPATH so the workspace copy of MaskDINO
+# is used by all worker processes (prevents duplicate dataset registration).
+if [ -z "${PYTHONPATH:-}" ]; then
+  export PYTHONPATH=/workspace
+else
+  export PYTHONPATH=/workspace:${PYTHONPATH}
+fi
+echo "PYTHONPATH=${PYTHONPATH}"
+
 # Run torch distributed launcher (torch.distributed.run) and execute the MaskDINO launcher
 python -m torch.distributed.run \
   --nproc_per_node=${NPROC_PER_NODE} \
