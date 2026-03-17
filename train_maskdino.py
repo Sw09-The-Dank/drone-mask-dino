@@ -277,26 +277,49 @@ def main():
                 try:
                     cfg.merge_from_file(parsed_args.config_file)
                 except KeyError as e:
+                    # Try to recover by creating missing nested CfgNode paths when
+                    # the KeyError names a non-existent config key like
+                    # 'MODEL.RESNETS.STEM_TYPE'. This makes merging robust to
+                    # configs that reference nodes added by external modules.
                     try:
-                        import yaml
-
-                        def _ensure_nodes(node, data):
+                        import re
+                        m = re.search(r"Non-existent config key: (.+)", str(e))
+                        if m:
+                            full_key = m.group(1)
+                            parts = full_key.split('.')
                             from detectron2.config import CfgNode as CN
 
-                            if not isinstance(data, dict):
-                                return
-                            for k, v in data.items():
-                                if not hasattr(node, k):
-                                    setattr(node, k, CN())
-                                _ensure_nodes(getattr(node, k), v)
-
-                        with open(parsed_args.config_file, "r") as _cf:
-                            cfg_dict = yaml.safe_load(_cf)
-                        _ensure_nodes(cfg, cfg_dict)
-                        cfg.merge_from_file(parsed_args.config_file)
+                            node = cfg
+                            for p in parts:
+                                if not hasattr(node, p):
+                                    setattr(node, p, CN())
+                                node = getattr(node, p)
+                            # Retry merge after creating missing nodes
+                            cfg.merge_from_file(parsed_args.config_file)
+                        else:
+                            raise e
                     except Exception:
-                        # Re-raise original error if we cannot recover
-                        raise e
+                        # Fallback: attempt to create nodes by inspecting the YAML
+                        try:
+                            import yaml
+
+                            def _ensure_nodes(node, data):
+                                from detectron2.config import CfgNode as CN
+
+                                if not isinstance(data, dict):
+                                    return
+                                for k, v in data.items():
+                                    if not hasattr(node, k):
+                                        setattr(node, k, CN())
+                                    _ensure_nodes(getattr(node, k), v)
+
+                            with open(parsed_args.config_file, "r") as _cf:
+                                cfg_dict = yaml.safe_load(_cf)
+                            _ensure_nodes(cfg, cfg_dict)
+                            cfg.merge_from_file(parsed_args.config_file)
+                        except Exception:
+                            # Re-raise original error if we cannot recover
+                            raise e
         # parsed_args comes from detectron2 default parser and contains `opts`
         if hasattr(parsed_args, "opts") and parsed_args.opts:
             cfg.merge_from_list(parsed_args.opts)
