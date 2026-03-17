@@ -73,7 +73,7 @@ python -m torch.distributed.run \
   --node_rank=${NODE_RANK} \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
-  train_m.py -- "${EXTRA_ARGS[@]}"
+  train_m.py "${EXTRA_ARGS[@]}"
 
 EXIT_STATUS=$?
 echo "DDP launcher exited with status ${EXIT_STATUS}"
