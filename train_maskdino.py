@@ -29,18 +29,19 @@ from detectron2.config import get_cfg
 from detectron2.engine import DefaultTrainer, default_setup, launch
 from detectron2.utils.logger import setup_logger
 
-# MaskDINO helpers
-try:
-    # Preferred path when the repository root is on PYTHONPATH
+# MaskDINO helpers: prefer the lowercase package name to avoid loading the
+# same code under two different module names (which can cause double-import
+# side-effects such as dataset registration). Fall back to the capitalized
+# package if necessary.
+import importlib.util
+if importlib.util.find_spec("maskdino") is not None:
+    from maskdino.config import add_maskdino_config
+elif importlib.util.find_spec("MaskDINO") is not None:
     from MaskDINO.maskdino.config import add_maskdino_config
-except Exception:
-    try:
-        # Fallback to direct package import if available
-        from maskdino.config import add_maskdino_config
-    except Exception:
-        raise ImportError(
-            "Could not import `add_maskdino_config` from MaskDINO; ensure the MaskDINO package is on PYTHONPATH or that you're running from the repository root."
-        )
+else:
+    raise ImportError(
+        "Could not import `add_maskdino_config` from MaskDINO; ensure the MaskDINO package is on PYTHONPATH or that you're running from the repository root."
+    )
 from detectron2.evaluation import (
     COCOEvaluator,
     COCOPanopticEvaluator,
