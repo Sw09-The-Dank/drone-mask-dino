@@ -271,55 +271,63 @@ def main():
         cfg = get_cfg()
         add_maskdino_config(cfg)
         if parsed_args.config_file:
-                # Detect and pre-create any missing config nodes referenced in
-                # the config file to avoid KeyError on merge (some configs may
-                # reference keys added by external modules).
+                # Load the config YAML and prune any top-level keys that don't
+                # exist in the current base `cfg`. This avoids KeyError for keys
+                # introduced by other projects or newer Detectron2 versions.
                 try:
-                    cfg.merge_from_file(parsed_args.config_file)
-                except KeyError as e:
-                    # Try to recover by creating missing nested CfgNode paths when
-                    # the KeyError names a non-existent config key like
-                    # 'MODEL.RESNETS.STEM_TYPE'. This makes merging robust to
-                    # configs that reference nodes added by external modules.
-                    try:
-                        import re
-                        m = re.search(r"Non-existent config key: (.+)", str(e))
-                        if m:
-                            full_key = m.group(1)
-                            parts = full_key.split('.')
-                            from detectron2.config import CfgNode as CN
+                    import yaml
 
-                            node = cfg
-                            for p in parts:
-                                if not hasattr(node, p):
-                                    setattr(node, p, CN())
-                                node = getattr(node, p)
-                            # Retry merge after creating missing nodes
-                            cfg.merge_from_file(parsed_args.config_file)
-                        else:
-                            raise e
-                    except Exception:
-                        # Fallback: attempt to create nodes by inspecting the YAML
+                    with open(parsed_args.config_file, "r") as _cf:
+                        cfg_dict = yaml.safe_load(_cf) or {}
+
+                    pruned_keys = []
+
+                    def _prune(node, d, prefix=""):
+                        # node: CfgNode or object; d: dict
+                        from detectron2.config import CfgNode as CN
+
+                        if not isinstance(d, dict):
+                            return
+                        for k in list(d.keys()):
+                            full_key = f"{prefix}.{k}" if prefix else k
+                            if not hasattr(node, k):
+                                # unknown key -> remove it and record path
+                                pruned_keys.append(full_key)
+                                del d[k]
+                            else:
+                                v = d.get(k)
+                                try:
+                                    child = getattr(node, k)
+                                except Exception:
+                                    pruned_keys.append(full_key)
+                                    del d[k]
+                                    continue
+                                if isinstance(v, dict):
+                                    _prune(child, v, full_key)
+
+                    _prune(cfg, cfg_dict)
+
+                    # Warn if any keys were pruned so user can review
+                    if pruned_keys:
+                        import sys
+                        msg = f"Pruned unknown config keys from {parsed_args.config_file}: {pruned_keys}"
                         try:
-                            import yaml
-
-                            def _ensure_nodes(node, data):
-                                from detectron2.config import CfgNode as CN
-
-                                if not isinstance(data, dict):
-                                    return
-                                for k, v in data.items():
-                                    if not hasattr(node, k):
-                                        setattr(node, k, CN())
-                                    _ensure_nodes(getattr(node, k), v)
-
-                            with open(parsed_args.config_file, "r") as _cf:
-                                cfg_dict = yaml.safe_load(_cf)
-                            _ensure_nodes(cfg, cfg_dict)
-                            cfg.merge_from_file(parsed_args.config_file)
+                            logging.getLogger("maskdino").warning(msg)
                         except Exception:
-                            # Re-raise original error if we cannot recover
-                            raise e
+                            pass
+                        print(msg, file=sys.stderr)
+
+                    # Write pruned config to a temp file and merge
+                    tf = tempfile.NamedTemporaryFile(delete=False, suffix=".yaml")
+                    with open(tf.name, "w") as _wf:
+                        yaml.safe_dump(cfg_dict, _wf)
+                    cfg.merge_from_file(tf.name)
+                except KeyError:
+                    # If pruning didn't help, re-raise to surface the original problem
+                    raise
+                except Exception:
+                    # As a last resort, try the original merge (so errors are visible)
+                    cfg.merge_from_file(parsed_args.config_file)
         # parsed_args comes from detectron2 default parser and contains `opts`
         if hasattr(parsed_args, "opts") and parsed_args.opts:
             cfg.merge_from_list(parsed_args.opts)
