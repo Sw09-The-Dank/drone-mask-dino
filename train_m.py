@@ -353,6 +353,44 @@ def setup(args):
         safe_opts.append(args.opts[i])
         i += 1
     cfg.merge_from_list(safe_opts)
+    # If the user provided a COCO train JSON, infer number of classes and
+    # enforce the NUM_CLASSES overrides early so model construction matches
+    # the dataset (important when resuming from checkpoints saved with a
+    # different class count).
+    try:
+        train_json_path = getattr(args, "train_json", None)
+        if train_json_path and os.path.isfile(train_json_path):
+            import json
+            with open(train_json_path, "r") as _jf:
+                _j = json.load(_jf)
+            if isinstance(_j.get("categories"), list) and len(_j.get("categories", [])) > 0:
+                _num_classes = len(_j["categories"])
+            else:
+                anns = _j.get("annotations", [])
+                cat_ids = {a.get("category_id") for a in anns if "category_id" in a}
+                _num_classes = len(cat_ids)
+            if _num_classes and _num_classes > 0:
+                try:
+                    cfg.MODEL.ROI_HEADS.NUM_CLASSES = _num_classes
+                except Exception:
+                    cfg.MODEL.ROI_HEADS = CN() if not hasattr(cfg.MODEL, "ROI_HEADS") else cfg.MODEL.ROI_HEADS
+                    cfg.MODEL.ROI_HEADS.NUM_CLASSES = _num_classes
+                try:
+                    cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = _num_classes
+                except Exception:
+                    if not hasattr(cfg.MODEL, "SEM_SEG_HEAD"):
+                        cfg.MODEL.SEM_SEG_HEAD = CN()
+                    cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = _num_classes
+                print(f"Inferred num_classes={_num_classes} from {train_json_path}; forcing MODEL.*.NUM_CLASSES")
+            # If user requested from-scratch behavior, ensure MODEL.WEIGHTS is empty
+            if getattr(args, "from_scratch", False):
+                try:
+                    cfg.MODEL.WEIGHTS = ""
+                except Exception:
+                    cfg.MODEL.WEIGHTS = ""
+                print("from_scratch requested: clearing MODEL.WEIGHTS to initialise from scratch")
+    except Exception:
+        pass
     # If user requested 'no:eval', set a cfg flag so Trainer can
     # intentionally disable EvalHook without relying on TEST.EVAL_PERIOD.
     try:
