@@ -608,10 +608,22 @@ if __name__ == "__main__":
     # support when requested).
     is_torchrun = any(k in os.environ for k in ("WORLD_SIZE", "RANK", "LOCAL_RANK"))
     if is_torchrun:
-        # When launched by torchrun, the runtime has already initialized the
-        # per-process environment (LOCAL_RANK) and will execute this script
-        # once per process. Call `main()` directly so the per-process code
-        # runs (Detectron2/MaskDINO code uses detectron2.utils.comm internally).
+        # When launched by torchrun, initialize the process group and set the
+        # CUDA device for this local rank so Detectron2's comm utilities see
+        # the correct world size and rank.
+        import torch.distributed as dist
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.set_device(local_rank)
+            except Exception:
+                pass
+        if not dist.is_initialized():
+            backend = "nccl" if torch.cuda.is_available() else "gloo"
+            try:
+                dist.init_process_group(backend=backend, init_method="env://")
+            except Exception:
+                pass
         print("Detected torchrun / torch.distributed.run environment.")
         print("Command Line Args:", args)
         print("pwd:", os.getcwd())
