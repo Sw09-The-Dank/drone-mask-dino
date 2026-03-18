@@ -70,7 +70,25 @@ from detectron2.engine import (
 import weakref
 import glob
 
+from detectron2.checkpoint import DetectionCheckpointer
 
+class AMPCheckpointer(DetectionCheckpointer):
+    def __init__(self, model, save_dir="", *, optimizer=None, scheduler=None, scaler=None):
+        super().__init__(model, save_dir, optimizer=optimizer, scheduler=scheduler)
+        self.scaler = scaler
+
+    def save(self, name, **kwargs):
+        if self.scaler is not None:
+            kwargs["scaler"] = self.scaler.state_dict()
+        super().save(name, **kwargs)
+
+    def load(self, path, *args, **kwargs):
+        checkpoint = super().load(path, *args, **kwargs)
+        if self.scaler is not None and "scaler" in checkpoint:
+            self.scaler.load_state_dict(checkpoint["scaler"])
+        return checkpoint
+    
+    
 class PruneCheckpointsHook(hooks.HookBase):
     """Hook that prunes old checkpoints in the output directory.
 
@@ -128,6 +146,7 @@ class Trainer(DefaultTrainer):
         model = self.build_model(cfg)
         optimizer = self.build_optimizer(cfg, model)
         data_loader = self.build_train_loader(cfg)
+        self.scaler = torch.amp.GradScaler() if cfg.SOLVER.AMP.ENABLED else None
 
         model = create_ddp_model(model, broadcast_buffers=False)
         self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
@@ -139,12 +158,19 @@ class Trainer(DefaultTrainer):
         kwargs = {
             'trainer': weakref.proxy(self),
         }
-        self.checkpointer = DetectionCheckpointer(model, cfg.OUTPUT_DIR, **kwargs)
+        
         self.start_iter = 0
         self.max_iter = cfg.SOLVER.MAX_ITER
         self.cfg = cfg
+        self.checkpointer = AMPCheckpointer(
+            model,
+            cfg.OUTPUT_DIR,
+            **kwargs,
+            optimizer=optimizer,
+            scheduler=self.scheduler,
+            scaler=self.scaler,
+        )
         self.register_hooks(self.build_hooks())
-        self.checkpointer = DetectionCheckpointer(model, cfg.OUTPUT_DIR, **kwargs)
 
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):
