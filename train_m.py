@@ -271,6 +271,68 @@ class Trainer(DefaultTrainer):
         hooks_list.append(PruneCheckpointsHook(keep=3))
         return hooks_list
 
+    def resume_or_load(self, resume=True):
+        """Resume from checkpoint and ensure trainer start iteration is set from
+        the checkpoint `iteration` key (or `last_checkpoint` file) when present.
+        This addresses cases where Detectron2 loads weights/optimizer but
+        doesn't restore the trainer iteration counter.
+        """
+        # Call DefaultTrainer behavior first (loads model/optim/scheduler)
+        try:
+            DefaultTrainer.resume_or_load(self, resume=resume)
+        except Exception:
+            try:
+                super().resume_or_load(resume=resume)
+            except Exception:
+                pass
+
+        # Now explicitly read the checkpoint file to set start iteration
+        try:
+            import os
+            ckpt_path = None
+            last_ck = os.path.join(self.cfg.OUTPUT_DIR, "last_checkpoint")
+            if os.path.exists(last_ck):
+                try:
+                    with open(last_ck, 'r') as f:
+                        content = f.read().strip()
+                    if content:
+                        if os.path.isabs(content):
+                            ckpt_path = content
+                        else:
+                            ckpt_path = os.path.join(self.cfg.OUTPUT_DIR, content)
+                except Exception:
+                    ckpt_path = None
+
+            # fallback to cfg.MODEL.WEIGHTS if explicit file exists
+            if ckpt_path is None:
+                try:
+                    w = self.cfg.MODEL.WEIGHTS
+                except Exception:
+                    w = None
+                if isinstance(w, str) and w and os.path.exists(w):
+                    ckpt_path = w
+
+            if ckpt_path and os.path.exists(ckpt_path):
+                import torch, logging
+                ckpt = torch.load(ckpt_path, map_location='cpu')
+                it = None
+                for k in ('iteration', 'iter', 'start_iter'):
+                    if k in ckpt:
+                        it = ckpt[k]
+                        break
+                if it is not None:
+                    try:
+                        self.start_iter = int(it)
+                        try:
+                            setattr(self._trainer, 'iter', int(it))
+                        except Exception:
+                            pass
+                        logging.getLogger('detectron2').info(f"Resuming: set start_iter to {self.start_iter} from {ckpt_path}")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     @classmethod
     def build_optimizer(cls, cfg, model):
         weight_decay_norm = cfg.SOLVER.WEIGHT_DECAY_NORM
