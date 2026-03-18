@@ -73,7 +73,10 @@ import glob
 from detectron2.checkpoint import DetectionCheckpointer
 
 class AMPCheckpointer(DetectionCheckpointer):
-    def __init__(self, model, save_dir="", *, optimizer=None, scheduler=None, scaler=None):
+    def __init__(self, model, save_dir="", *, trainer=None, optimizer=None, scheduler=None, scaler=None, **kwargs):
+        # Accept an optional `trainer` kwarg for compatibility with caller sites
+        # that pass a `trainer` proxy. We don't forward it to the parent.
+        self.trainer = trainer
         super().__init__(model, save_dir, optimizer=optimizer, scheduler=scheduler)
         self.scaler = scaler
 
