@@ -397,10 +397,9 @@ sudo docker run --gpus all --rm -it \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/m_ddp.sh 2 1 0 169.254.18.231 29500 \
-      --fix-json-root --max-iter 10 --base-lr 5e-05 --from-scratch --output /workspace/output \
+      --fix-json-root --max-iter 6000 --base-lr 5e-05 --resume --output /workspace/output \
       --config-file maskdino_drone_config.yaml \
-      MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 MODEL.MaskDINO.TRAIN_NUM_POINTS 256 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 32 \
-      TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 8
+      TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 10
   "
 
 
@@ -414,8 +413,7 @@ sudo docker run --gpus all --rm -it \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/m_ddp.sh 2 1 1 169.254.18.231 29500 \
-      --fix-json-root --max-iter 10 --base-lr 5e-05 --from-scratch --output /workspace/output \
-      --config-file MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml \
-      MODEL.MaskDINO.NUM_OBJECT_QUERIES 8 MODEL.MaskDINO.TRAIN_NUM_POINTS 256 MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE 32 \
-      TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 8
+      --fix-json-root --max-iter 6000 --base-lr 5e-05 --resume --output /workspace/output \
+      --config-file maskdino_drone_config.yaml \
+      TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 10
   "
