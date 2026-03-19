@@ -237,14 +237,19 @@ class Trainer(DefaultTrainer):
 
     @classmethod
     def test(cls, cfg, model, evaluators=None):
-        # Only run evaluation on the main process to avoid DDP-related errors
-        # in cluster training where some evaluators are not fully distributed-safe.
+        # Run Detectron2's test on all ranks so distributed collectives match,
+        # but only return results on the main process to avoid IO on workers.
+        try:
+            results = super(Trainer, cls).test(cfg, model, evaluators)
+        except Exception:
+            # propagate exceptions so failures are visible
+            raise
         try:
             if not comm.is_main_process():
                 return {}
         except Exception:
             pass
-        return super(Trainer, cls).test(cfg, model, evaluators)
+        return results
 
     @classmethod
     def build_train_loader(cls, cfg):
