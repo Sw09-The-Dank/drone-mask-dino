@@ -739,7 +739,9 @@ def main(args):
         return res
     # print(cfg)
     trainer = Trainer(cfg)
-    trainer.resume_or_load(resume=args.resume)
+    # If user requested a from-scratch run, do not resume from existing checkpoints
+    resume_flag = bool(getattr(args, 'resume', False)) and not bool(getattr(args, 'from_scratch', False))
+    trainer.resume_or_load(resume=resume_flag)
     return trainer.train()
 
 
