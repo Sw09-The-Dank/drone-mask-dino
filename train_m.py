@@ -442,6 +442,38 @@ class Trainer(DefaultTrainer):
                             setattr(self._trainer, 'iter', int(it))
                         except Exception:
                             pass
+                        # Clamp scheduler state to valid range when resuming.
+                        # Some ParamScheduler implementations compute a ratio
+                        # using `last_epoch / _max_iter`. If `last_epoch` slightly
+                        # exceeds `_max_iter` (e.g., due to off-by-one in saved
+                        # metadata), the scheduler can raise. Ensure the saved
+                        # iteration is clamped to the scheduler's max range.
+                        try:
+                            sched = getattr(self, 'scheduler', None)
+                            if sched is not None:
+                                # prefer scheduler's _max_iter if present
+                                max_for_sched = getattr(sched, '_max_iter', None)
+                                if max_for_sched is None:
+                                    max_for_sched = getattr(self, 'max_iter', None)
+                                if max_for_sched is not None:
+                                    max_for_sched = int(max_for_sched)
+                                    last = int(it)
+                                    if last > max_for_sched:
+                                        last = max_for_sched
+                                    # set common scheduler bookkeeping fields
+                                    try:
+                                        if hasattr(sched, 'last_epoch'):
+                                            sched.last_epoch = last
+                                    except Exception:
+                                        pass
+                                    try:
+                                        # torch schedulers may expose _step_count
+                                        if hasattr(sched, '_step_count'):
+                                            sched._step_count = last + 1
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
                         logging.getLogger('detectron2').info(f"Resuming: set start_iter to {self.start_iter} from {ckpt_path}")
                     except Exception:
                         pass
