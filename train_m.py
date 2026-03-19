@@ -744,6 +744,8 @@ if __name__ == "__main__":
     parser.add_argument('--EVAL_FLAG', type=int, default=1)
     # Convenience: output directory (mapped to OUTPUT_DIR override)
     parser.add_argument('--output', default='/workspace/output')
+    parser.add_argument('--eval-num-images', type=int, default=None,
+                        help='If set, restrict evaluation to this many images by creating a temporary subset COCO json for DATASETS.TEST')
     args = parser.parse_args()
     # If user provided train/val JSONs via these convenience flags, register them
     # under repository-local names and translate into cfg overrides appended
@@ -794,6 +796,29 @@ if __name__ == "__main__":
 
         train_name = "drone_train_polygons"
         val_name = "drone_val_polygons"
+        # Optionally restrict validation set size for faster eval/debug runs
+        try:
+            eval_num = int(getattr(args, 'eval_num_images', 0) or 0)
+        except Exception:
+            eval_num = 0
+        if eval_num and val_json and os.path.isfile(val_json):
+            try:
+                import json, tempfile
+                with open(val_json, 'r') as _vf:
+                    _vj = json.load(_vf)
+                _imgs = _vj.get('images', [])[:eval_num]
+                _ids = {i.get('id') for i in _imgs if 'id' in i}
+                _anns = [a for a in _vj.get('annotations', []) if a.get('image_id') in _ids]
+                _new = {'images': _imgs, 'annotations': _anns, 'categories': _vj.get('categories', [])}
+                _tf = tempfile.NamedTemporaryFile(delete=False, suffix='.json')
+                with open(_tf.name, 'w') as _wf:
+                    json.dump(_new, _wf)
+                val_json = _tf.name
+                # when we replace the val json with a temp file we avoid rewriting roots
+                val_reg_root = ""
+                print(f"Using subset val json for evaluation: {_tf.name} (first {eval_num} images)")
+            except Exception:
+                pass
         if train_json and os.path.isfile(train_json) and register_coco_instances is not None:
             register_coco_instances(train_name, {}, train_json, train_reg_root)
             dataset_overrides.extend(["DATASETS.TRAIN", "('" + train_name + "',)"])
