@@ -742,6 +742,29 @@ def main(args):
     # If user requested a from-scratch run, do not resume from existing checkpoints
     resume_flag = bool(getattr(args, 'resume', False)) and not bool(getattr(args, 'from_scratch', False))
     trainer.resume_or_load(resume=resume_flag)
+    # If the restored start_iter is already at (or effectively at) the
+    # configured max_iter, consider training complete and exit. This
+    # accounts for off-by-one differences between saved checkpoints and
+    # the current `SOLVER.MAX_ITER` (some checkpoints save the final
+    # completed iteration as max_iter-1).
+    try:
+        max_iter = int(getattr(trainer, 'max_iter', None) or getattr(trainer.cfg.SOLVER, 'MAX_ITER', None))
+    except Exception:
+        max_iter = None
+    try:
+        start_iter = int(getattr(trainer, 'start_iter', 0))
+    except Exception:
+        start_iter = 0
+
+    if max_iter is not None:
+        # Treat a restored iteration >= (max_iter - 1) as finished to avoid
+        # performing an extra round of training when the checkpoint represents
+        # a completed run.
+        if start_iter >= max_iter - 1:
+            if comm.is_main_process():
+                print(f"Restored iteration {start_iter} >= max_iter-1 ({max_iter-1}).\nSkipping training (considered already completed).")
+            return
+
     return trainer.train()
 
 
