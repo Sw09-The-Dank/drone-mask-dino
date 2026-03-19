@@ -21,7 +21,8 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
         build-essential ca-certificates git wget curl pkg-config cmake \
         libglib2.0-0 libsm6 libxrender1 libxext6 libhdf5-dev libjpeg-dev zlib1g-dev unzip \
-        libgl1 ninja-build perl || true; \
+        libgl1 ninja-build perl \
+        libopenmpi3 libopenmpi-dev\
     # Try common EGL/mesa package names (non-fatal if none available)
     (apt-get install -y --no-install-recommends libegl-mesa0 || apt-get install -y --no-install-recommends libegl1-mesa || true); \
     (apt-get install -y --no-install-recommends libgl1-mesa-dri || true); \
@@ -55,6 +56,9 @@ COPY . /workspace
 # like `from MaskDINO.maskdino.config import ...` resolve when running from the
 # mounted repository root.
 ENV PYTHONPATH=/workspace/MaskDINO:/workspace:${PYTHONPATH:-}
+
+# Ensure CUDA and common loader paths are available for runtime shared libs
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}
 
 ## Install detectron2 (prefer local source) and common extras before ops build
 RUN set -eux; \
