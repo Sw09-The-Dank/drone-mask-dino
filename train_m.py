@@ -466,84 +466,55 @@ class Trainer(DefaultTrainer):
             except Exception:
                 pass
 
-        # Now explicitly read the checkpoint file to set start iteration
-        try:
-            import os
-            ckpt_path = None
-            last_ck = os.path.join(self.cfg.OUTPUT_DIR, "last_checkpoint")
-            if os.path.exists(last_ck):
+            # Now explicitly read the checkpoint file to set start iteration, but
+            # only when resuming is requested. When running from scratch we must
+            # avoid picking up previous iteration counters.
+            if resume:
                 try:
-                    with open(last_ck, 'r') as f:
-                        content = f.read().strip()
-                    if content:
-                        if os.path.isabs(content):
-                            ckpt_path = content
-                        else:
-                            ckpt_path = os.path.join(self.cfg.OUTPUT_DIR, content)
-                except Exception:
+                    import os
                     ckpt_path = None
+                    last_ck = os.path.join(self.cfg.OUTPUT_DIR, "last_checkpoint")
+                    if os.path.exists(last_ck):
+                        try:
+                            with open(last_ck, 'r') as f:
+                                content = f.read().strip()
+                            if content:
+                                if os.path.isabs(content):
+                                    ckpt_path = content
+                                else:
+                                    ckpt_path = os.path.join(self.cfg.OUTPUT_DIR, content)
+                        except Exception:
+                            ckpt_path = None
 
-            # fallback to cfg.MODEL.WEIGHTS if explicit file exists
-            if ckpt_path is None:
-                try:
-                    w = self.cfg.MODEL.WEIGHTS
+                    # fallback to cfg.MODEL.WEIGHTS if explicit file exists
+                    if ckpt_path is None:
+                        try:
+                            w = self.cfg.MODEL.WEIGHTS
+                        except Exception:
+                            w = None
+                        if isinstance(w, str) and w and os.path.exists(w):
+                            ckpt_path = w
+
+                    if ckpt_path and os.path.exists(ckpt_path):
+                        import torch, logging
+                        ckpt = torch.load(ckpt_path, map_location='cpu')
+                        it = None
+                        for k in ('iteration', 'iter', 'start_iter'):
+                            if k in ckpt:
+                                it = ckpt[k]
+                                break
+                        if it is not None:
+                            try:
+                                self.start_iter = int(it)
+                                try:
+                                    setattr(self._trainer, 'iter', int(it))
+                                except Exception:
+                                    pass
+                                logging.getLogger('detectron2').info(f"Resuming: set start_iter to {self.start_iter} from {ckpt_path}")
+                            except Exception:
+                                pass
                 except Exception:
-                    w = None
-                if isinstance(w, str) and w and os.path.exists(w):
-                    ckpt_path = w
-
-            if ckpt_path and os.path.exists(ckpt_path):
-                import torch, logging
-                ckpt = torch.load(ckpt_path, map_location='cpu')
-                it = None
-                for k in ('iteration', 'iter', 'start_iter'):
-                    if k in ckpt:
-                        it = ckpt[k]
-                        break
-                if it is not None:
-                    try:
-                        self.start_iter = int(it)
-                        try:
-                            setattr(self._trainer, 'iter', int(it))
-                        except Exception:
-                            pass
-                        # Clamp scheduler state to valid range when resuming.
-                        # Some ParamScheduler implementations compute a ratio
-                        # using `last_epoch / _max_iter`. If `last_epoch` slightly
-                        # exceeds `_max_iter` (e.g., due to off-by-one in saved
-                        # metadata), the scheduler can raise. Ensure the saved
-                        # iteration is clamped to the scheduler's max range.
-                        try:
-                            sched = getattr(self, 'scheduler', None)
-                            if sched is not None:
-                                # prefer scheduler's _max_iter if present
-                                max_for_sched = getattr(sched, '_max_iter', None)
-                                if max_for_sched is None:
-                                    max_for_sched = getattr(self, 'max_iter', None)
-                                if max_for_sched is not None:
-                                    max_for_sched = int(max_for_sched)
-                                    last = int(it)
-                                    if last > max_for_sched:
-                                        last = max_for_sched
-                                    # set common scheduler bookkeeping fields
-                                    try:
-                                        if hasattr(sched, 'last_epoch'):
-                                            sched.last_epoch = last
-                                    except Exception:
-                                        pass
-                                    try:
-                                        # torch schedulers may expose _step_count
-                                        if hasattr(sched, '_step_count'):
-                                            sched._step_count = last + 1
-                                    except Exception:
-                                        pass
-                        except Exception:
-                            pass
-                        logging.getLogger('detectron2').info(f"Resuming: set start_iter to {self.start_iter} from {ckpt_path}")
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    pass
 
     @classmethod
     def build_optimizer(cls, cfg, model):
