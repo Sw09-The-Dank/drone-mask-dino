@@ -237,18 +237,13 @@ class Trainer(DefaultTrainer):
 
     @classmethod
     def test(cls, cfg, model, evaluators=None):
-        # Run Detectron2's test on all ranks so distributed collectives match,
-        # but only return results on the main process to avoid IO on workers.
+        # Run Detectron2's test on all ranks so distributed collectives match
+        # and return evaluator results on every rank.
         try:
             results = super(Trainer, cls).test(cfg, model, evaluators)
         except Exception:
             # propagate exceptions so failures are visible
             raise
-        try:
-            if not comm.is_main_process():
-                return {}
-        except Exception:
-            pass
         return results
 
     @classmethod
@@ -728,7 +723,6 @@ def main(args):
     print("Command cfg:", cfg)
     if args.eval_only:
         model = Trainer.build_model(cfg)
-        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(cfg.MODEL.WEIGHTS, resume=args.resume)
         checkpointer = DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR)
         checkpointer.resume_or_load(cfg.MODEL.WEIGHTS, resume=args.resume)
         res = Trainer.test(cfg, model)
@@ -762,8 +756,27 @@ def main(args):
         # a completed run.
         if start_iter >= max_iter - 1:
             if comm.is_main_process():
-                print(f"Restored iteration {start_iter} >= max_iter-1 ({max_iter-1}).\nSkipping training (considered already completed).")
-            return
+                print(f"Restored iteration {start_iter} >= max_iter-1 ({max_iter-1}).\nSkipping training (considered already completed). Running evaluation instead.")
+            # Run evaluation across ranks; Trainer.test runs on all ranks but
+            # returns results only on the main process to avoid worker IO.
+            try:
+                model = getattr(trainer._trainer, 'model', None)
+                if model is None:
+                    # If trainer didn't create the model, build it now. We assume
+                    # weights were already loaded by `trainer.resume_or_load`.
+                    model = trainer.build_model(trainer.cfg)
+                res = Trainer.test(trainer.cfg, model)
+                if getattr(trainer.cfg.TEST, 'AUG', None) and getattr(trainer.cfg.TEST.AUG, 'ENABLED', False):
+                    res.update(Trainer.test_with_TTA(trainer.cfg, model))
+                if comm.is_main_process():
+                    try:
+                        verify_results(trainer.cfg, res)
+                    except Exception:
+                        pass
+                return res
+            except Exception:
+                # If evaluation fails for any reason, exit gracefully
+                return
 
     return trainer.train()
 
