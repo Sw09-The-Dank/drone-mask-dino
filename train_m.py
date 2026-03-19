@@ -372,6 +372,55 @@ class Trainer(DefaultTrainer):
 
             # add hook near start so its before_step runs before EvalHook's after_step
             hooks_list.insert(0, PrePostEvalSyncHook())
+            # Also insert explicit pre/post barrier hooks around any EvalHook
+            # instances to force an explicit comm/ CUDA sync before and after
+            # evaluation. This is a lightweight, non-invasive way to ensure
+            # all ranks have reached the same point when EvalHook runs.
+            try:
+                class BarrierHook(hooks.HookBase):
+                    def __init__(self, when: str = "pre"):
+                        # when: 'pre' runs barrier in before_step, 'post' runs in after_step
+                        self.when = when
+
+                    def before_step(self):
+                        if self.when != "pre":
+                            return
+                        try:
+                            torch.cuda.synchronize()
+                        except Exception:
+                            pass
+                        try:
+                            comm.synchronize()
+                        except Exception:
+                            pass
+
+                    def after_step(self):
+                        if self.when != "post":
+                            return
+                        try:
+                            torch.cuda.synchronize()
+                        except Exception:
+                            pass
+                        try:
+                            comm.synchronize()
+                        except Exception:
+                            pass
+
+                # Rebuild hooks_list inserting barriers around EvalHook instances
+                new_hooks = []
+                for h in hooks_list:
+                    try:
+                        if h.__class__.__name__ == "EvalHook":
+                            new_hooks.append(BarrierHook("pre"))
+                            new_hooks.append(h)
+                            new_hooks.append(BarrierHook("post"))
+                            continue
+                    except Exception:
+                        pass
+                    new_hooks.append(h)
+                hooks_list = new_hooks
+            except Exception:
+                pass
         except Exception:
             pass
         # If the user explicitly requested no evaluation via the `no:eval`
