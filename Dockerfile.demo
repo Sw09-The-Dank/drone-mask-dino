@@ -62,6 +62,11 @@ ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY
 
 ## Install detectron2 (prefer local source) and common extras before ops build
 RUN set -eux; \
+    # Temporarily hide host HPCX/UCX/UCC libs that may be present in the base image
+    # and can cause incompatible-symbol errors when Python imports torch during
+    # pip metadata generation. If /opt/hpcx exists, move it out of the loader path
+    # for the duration of the build step.
+    if [ -d /opt/hpcx ]; then mv /opt/hpcx /opt/hpcx.disabled || true; fi; \
     # ensure pip tools are up to date
     python -m pip install --upgrade pip setuptools wheel; \
     if [ -d /workspace/detectron2 ]; then \
