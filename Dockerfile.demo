@@ -22,7 +22,7 @@ RUN set -eux; \
         build-essential ca-certificates git wget curl pkg-config cmake \
         libglib2.0-0 libsm6 libxrender1 libxext6 libhdf5-dev libjpeg-dev zlib1g-dev unzip \
         libgl1 ninja-build perl \
-        libopenmpi3 libopenmpi-dev\
+        libopenmpi3 libopenmpi-dev; \
     # Try common EGL/mesa package names (non-fatal if none available)
     (apt-get install -y --no-install-recommends libegl-mesa0 || apt-get install -y --no-install-recommends libegl1-mesa || true); \
     (apt-get install -y --no-install-recommends libgl1-mesa-dri || true); \
