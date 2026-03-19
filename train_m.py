@@ -67,6 +67,7 @@ from detectron2.engine import (
     AMPTrainer,
     SimpleTrainer,
 )
+import torch.distributed as dist
 import weakref
 import glob
 
@@ -259,6 +260,120 @@ class Trainer(DefaultTrainer):
     def build_hooks(self):
         # Use DefaultTrainer hooks and append a checkpoint-pruning hook
         hooks_list = DefaultTrainer.build_hooks(self)
+        # Insert synchronization and duplicate-work checks around evaluation
+        try:
+            class PrePostEvalSyncHook(hooks.HookBase):
+                """Ensure ranks synchronize before/after evaluation and perform
+                lightweight checks to detect duplicate work (sampler type and RNG state).
+                """
+                def before_step(self):
+                    try:
+                        cfg = getattr(self.trainer, 'cfg', None)
+                        eval_period = 0
+                        if cfg is not None:
+                            eval_period = int(getattr(cfg.TEST, 'EVAL_PERIOD', 0) or 0)
+                        cur_iter = int(getattr(self.trainer, 'iter', 0))
+                        # If the next iteration will trigger evaluation, sync now
+                        if eval_period > 0 and ((cur_iter + 1) % eval_period) == 0:
+                            try:
+                                torch.cuda.synchronize()
+                            except Exception:
+                                pass
+                            try:
+                                comm.synchronize()
+                            except Exception:
+                                pass
+                            # Duplicate-work checks: sampler type and RNG fingerprints
+                            try:
+                                world_size = comm.get_world_size()
+                                if world_size > 1 and dist.is_initialized():
+                                    # sampler name
+                                    sampler_name = None
+                                    try:
+                                        dl = getattr(self.trainer._trainer, 'data_loader', None)
+                                        if dl is not None and hasattr(dl, 'sampler'):
+                                            sampler_name = dl.sampler.__class__.__name__
+                                    except Exception:
+                                        sampler_name = None
+
+                                    # RNG fingerprints
+                                    try:
+                                        import numpy as _np
+                                        py_state = random.getstate()
+                                        py_digest = hash(str(py_state[1][:10]))
+                                    except Exception:
+                                        py_digest = None
+                                    try:
+                                        np_state = None
+                                        if 'numpy' in globals():
+                                            np_state = _np.random.get_state()
+                                            np_digest = hash(str(np_state[1][:10]))
+                                        else:
+                                            np_digest = None
+                                    except Exception:
+                                        np_digest = None
+                                    try:
+                                        torch_digest = None
+                                        tr = torch.get_rng_state()
+                                        try:
+                                            torch_digest = hash(tr.cpu().numpy().tobytes())
+                                        except Exception:
+                                            torch_digest = hash(str(tr))
+                                    except Exception:
+                                        torch_digest = None
+
+                                    payload = {'sampler': sampler_name, 'py': py_digest, 'np': np_digest, 'torch': torch_digest}
+                                    try:
+                                        gathered = [None] * world_size
+                                        dist.all_gather_object(gathered, payload)
+                                        # analyze gathered for obvious duplicates
+                                        samplers = [g.get('sampler') for g in gathered if g]
+                                        if any(s is None for s in samplers) is False:
+                                            # if not using DistributedSampler, warn
+                                            if not all(s == 'DistributedSampler' for s in samplers):
+                                                if comm.is_main_process():
+                                                    logging.getLogger('detectron2').warning(
+                                                        'Sampler names across ranks: %s. Consider using DistributedSampler to avoid duplicated work.' % samplers
+                                                    )
+                                        # check RNG duplicates
+                                        pylist = [g.get('py') for g in gathered if g]
+                                        torchlist = [g.get('torch') for g in gathered if g]
+                                        if len(set(pylist)) < len(pylist) or len(set(torchlist)) < len(torchlist):
+                                            if comm.is_main_process():
+                                                logging.getLogger('detectron2').warning(
+                                                    'Detected identical RNG fingerprints across ranks. This may cause duplicated data augmentations/work. Ensure each rank has a unique seed.'
+                                                )
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                def after_step(self):
+                    try:
+                        cfg = getattr(self.trainer, 'cfg', None)
+                        eval_period = 0
+                        if cfg is not None:
+                            eval_period = int(getattr(cfg.TEST, 'EVAL_PERIOD', 0) or 0)
+                        cur_iter = int(getattr(self.trainer, 'iter', 0))
+                        # If we just ran an evaluation, sync again to ensure clean state
+                        if eval_period > 0 and (cur_iter % eval_period) == 0:
+                            try:
+                                torch.cuda.synchronize()
+                            except Exception:
+                                pass
+                            try:
+                                comm.synchronize()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+            # add hook near start so its before_step runs before EvalHook's after_step
+            hooks_list.insert(0, PrePostEvalSyncHook())
+        except Exception:
+            pass
         # If the user explicitly requested no evaluation via the `no:eval`
         # token, disable Detectron2's EvalHook. We check `cfg.NO_EVAL` so
         # evaluation is only disabled when explicitly requested.
