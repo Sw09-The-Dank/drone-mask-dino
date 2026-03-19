@@ -505,11 +505,41 @@ class Trainer(DefaultTrainer):
                                 break
                         if it is not None:
                             try:
-                                self.start_iter = int(it)
+                                last_iter = int(it)
+                                # Clamp the restored iteration to scheduler/max range to
+                                # avoid ParamScheduler `where` > 1.0 errors.
+                                max_for_sched = None
                                 try:
-                                    setattr(self._trainer, 'iter', int(it))
+                                    sched = getattr(self, 'scheduler', None)
+                                    if sched is not None:
+                                        max_for_sched = getattr(sched, '_max_iter', None)
+                                except Exception:
+                                    max_for_sched = None
+                                if max_for_sched is None:
+                                    try:
+                                        max_for_sched = int(getattr(self, 'max_iter', None))
+                                    except Exception:
+                                        max_for_sched = None
+
+                                if max_for_sched is not None and last_iter > int(max_for_sched):
+                                    last_iter = int(max_for_sched)
+
+                                self.start_iter = last_iter
+                                try:
+                                    setattr(self._trainer, 'iter', last_iter)
                                 except Exception:
                                     pass
+
+                                # Update scheduler bookkeeping so get_lr() uses a valid ratio
+                                try:
+                                    if sched is not None:
+                                        if hasattr(sched, 'last_epoch'):
+                                            sched.last_epoch = last_iter
+                                        if hasattr(sched, '_step_count'):
+                                            sched._step_count = last_iter + 1
+                                except Exception:
+                                    pass
+
                                 logging.getLogger('detectron2').info(f"Resuming: set start_iter to {self.start_iter} from {ckpt_path}")
                             except Exception:
                                 pass
