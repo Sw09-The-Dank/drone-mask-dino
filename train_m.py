@@ -235,6 +235,17 @@ class Trainer(DefaultTrainer):
         return DatasetEvaluators(evaluator_list)
 
     @classmethod
+    def test(cls, cfg, model, evaluators=None):
+        # Only run evaluation on the main process to avoid DDP-related errors
+        # in cluster training where some evaluators are not fully distributed-safe.
+        try:
+            if not comm.is_main_process():
+                return {}
+        except Exception:
+            pass
+        return super(Trainer, cls).test(cfg, model, evaluators)
+
+    @classmethod
     def build_train_loader(cls, cfg):
         if cfg.INPUT.DATASET_MAPPER_NAME == "coco_instance_lsj":
             mapper = COCOInstanceNewBaselineDatasetMapper(cfg, True)
