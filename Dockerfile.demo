@@ -62,19 +62,31 @@ ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY
 
 ## Install detectron2 (prefer local source) and common extras before ops build
 RUN set -eux; \
-    # Attempt to install UCX/UCC runtime packages inside the image so
-    # `libucc.so.1` and related libraries are available to the in-container
-    # Python/PyTorch runtime during pip metadata generation. This helps avoid
-    # failures if the host HPC-X/UCX/UCC libraries are hidden during the build.
+    # Attempt to install UCX/UCC runtime packages from APT (may not be available
+    # on all base images). Non-fatal: `|| true` lets us continue to the tarball
+    # installation fallback below.
     apt-get update; \
-    apt-get install -y --no-install-recommends \
-        libucx1 libucx-dev libucx-tools libucc1 libucc-dev || true; \
-    # Temporarily hide host HPCX/UCX/UCC libs that may be present in the base image
-    # and can cause incompatible-symbol errors when Python imports torch during
-    # pip metadata generation. If /opt/hpcx exists, move it out of the loader path
-    # for the duration of the build step.
+    apt-get install -y --no-install-recommends libucx1 libucx-dev libucx-tools libucc1 libucc-dev || true; \
+    # If a host HPC-X install exists, move it out of the way so we can place
+    # a known-good runtime into /opt/hpcx for in-container use during build.
     if [ -d /opt/hpcx ]; then mv /opt/hpcx /opt/hpcx.disabled || true; fi; \
-    # ensure pip tools are up to date
+    # Download and extract a prebuilt HPC-X / UCX+UCC runtime tarball into
+    # /opt/hpcx so that `libucc.so.1` is present for Python/PyTorch imports
+    # during pip metadata generation. REPLACE the placeholder URL below with a
+    # vendor-provided HPC-X/UCX+UCC tarball URL appropriate for your platform.
+    set +e; \
+    if [ -z "${HPCX_TARBALL_URL:-}" ]; then \
+        echo "NOTE: HPCX_TARBALL_URL not set; using placeholder URL (replace me)"; \
+    fi; \
+    mkdir -p /opt; \
+    if curl -fSsL -o /tmp/hpcx.tar.gz "${HPCX_TARBALL_URL:-https://example.com/hpcx-<version>-x86_64.tar.gz}"; then \
+        tar -C /opt -xzf /tmp/hpcx.tar.gz || true; \
+    else \
+        echo "Warning: failed to download HPC-X tarball; continuing without it"; \
+    fi; \
+    set -e; \
+    # ensure pip tools are up to date and set LD so the extracted runtime is used
+    export LD_LIBRARY_PATH=/opt/hpcx/lib:$LD_LIBRARY_PATH; \
     python -m pip install --upgrade pip setuptools wheel; \
     if [ -d /workspace/detectron2 ]; then \
         python -m pip install -e /workspace/detectron2 --no-build-isolation; \
