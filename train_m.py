@@ -758,6 +758,7 @@ if __name__ == "__main__":
     parser.add_argument("--ims-per-batch", type=int, default=None)
     parser.add_argument('--eval_only', action='store_true')
     parser.add_argument('--EVAL_FLAG', type=int, default=1)
+    parser.add_argument('--eval-num-images', type=int, default=0, help='Limit number of evaluation images (subset of validation)')
     # Convenience: output directory (mapped to OUTPUT_DIR override)
     parser.add_argument('--output', default='/workspace/output')
     parser.add_argument('--eval-num-images', type=int, default=None,
