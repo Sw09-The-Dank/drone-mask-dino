@@ -46,6 +46,10 @@ export NCCL_SOCKET_RETRY_SLEEP_MSEC=${NCCL_SOCKET_RETRY_SLEEP_MSEC:-2000}
 export NCCL_NET_GDR_LEVEL=${NCCL_NET_GDR_LEVEL:-2}
 export NCCL_IB_HCA=${NCCL_IB_HCA:-mlx5}
 
+export NCCL_DEBUG_SUBSYS=ALL
+export TORCH_DISTRIBUTED_DEBUG=DETAIL
+export TORCH_NCCL_TRACE_BUFFER_SIZE=1048576
+
 # Auto-detect network interface used to reach MASTER_ADDR when the user left the
 # default interface (eth0) or did not set NCCL_SOCKET_IFNAME. This helps common
 # multi-host setups where the interface name differs between machines.

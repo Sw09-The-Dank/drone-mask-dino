@@ -369,6 +369,48 @@ sudo docker run --gpus all --rm -it \
   maskdino-demo:latest -c "python scripts/inspect_checkpoint.py output/model_final.pth"
 
 
+
+
+
+
+
+
+Debugging:
+
+sudo docker run --gpus all --rm -it \
+  --network=host --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --ulimit core=-1 \
+  -e NCCL_DEBUG=INFO -e NCCL_DEBUG_SUBSYS=ALL -e TORCH_DISTRIBUTED_DEBUG=DETAIL \
+  -e TORCH_FR_BUFFER_SIZE=1048576 -e NCCL_IB_DISABLE=1 -e NCCL_P2P_DISABLE=1 -e NCCL_COLLNET_DISABLE=1 \
+  -e NCCL_NET_GDR_LEVEL=0 -e NCCL_SOCKET_RETRY_CNT=10 -e NCCL_SOCKET_RETRY_SLEEP_MSEC=2000 \
+  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
+  -e LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu \
+  -v /tmp/empty:/opt/hpcx:ro \
+  -v "$(pwd):/workspace" -w /workspace \
+  maskdino-demo:latest \
+  /bin/bash -lc "mkdir -p /workspace/ddp_debug_logs && \
+    bash ./scripts/m_ddp.sh 2 1 0 169.254.18.231 29500 --fix-json-root --max-iter 10000 --resume --output /workspace/output --config-file maskdino_drone_config.yaml TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 10 2>&1 | tee /workspace/ddp_debug_logs/node1.log"
+
+sudo docker run --gpus all --rm -it \
+  --network=host --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --ulimit core=-1 \
+  -e NCCL_DEBUG=INFO -e NCCL_DEBUG_SUBSYS=ALL -e TORCH_DISTRIBUTED_DEBUG=DETAIL \
+  -e TORCH_FR_BUFFER_SIZE=1048576 -e NCCL_IB_DISABLE=1 -e NCCL_P2P_DISABLE=1 -e NCCL_COLLNET_DISABLE=1 \
+  -e NCCL_NET_GDR_LEVEL=0 -e NCCL_SOCKET_RETRY_CNT=10 -e NCCL_SOCKET_RETRY_SLEEP_MSEC=2000 \
+  -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
+  -e LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu \
+  -v /tmp/empty:/opt/hpcx:ro \
+  -v "$(pwd):/workspace" -w /workspace \
+  maskdino-demo:latest \
+  /bin/bash -lc "mkdir -p /workspace/ddp_debug_logs && \
+    bash ./scripts/m_ddp.sh 2 1 1 169.254.18.231 29500 --fix-json-root --max-iter 10000 --resume --output /workspace/output --config-file maskdino_drone_config.yaml TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 10 2>&1 | tee /workspace/ddp_debug_logs/node1.log"
+
+
+
+docker run --rm -it maskdino-demo:latest bash -lc "ldconfig -p | grep libmpi; ls -l /usr/local/cuda/lib64/libcublas*"
+docker run --gpus all --rm -it maskdino-demo:latest python -c "import torch; print('torch OK')"
+
+
+
+
 Test - working:
 
 sudo docker run --gpus all --rm -it \

@@ -67,6 +67,7 @@ from detectron2.engine import (
     AMPTrainer,
     SimpleTrainer,
 )
+import torch.distributed as dist
 import weakref
 import glob
 
@@ -270,6 +271,169 @@ class Trainer(DefaultTrainer):
     def build_hooks(self):
         # Use DefaultTrainer hooks and append a checkpoint-pruning hook
         hooks_list = DefaultTrainer.build_hooks(self)
+        # Insert synchronization and duplicate-work checks around evaluation
+        try:
+            class PrePostEvalSyncHook(hooks.HookBase):
+                """Ensure ranks synchronize before/after evaluation and perform
+                lightweight checks to detect duplicate work (sampler type and RNG state).
+                """
+                def before_step(self):
+                    try:
+                        cfg = getattr(self.trainer, 'cfg', None)
+                        eval_period = 0
+                        if cfg is not None:
+                            eval_period = int(getattr(cfg.TEST, 'EVAL_PERIOD', 0) or 0)
+                        cur_iter = int(getattr(self.trainer, 'iter', 0))
+                        # If the next iteration will trigger evaluation, sync now
+                        if eval_period > 0 and ((cur_iter + 1) % eval_period) == 0:
+                            try:
+                                torch.cuda.synchronize()
+                            except Exception:
+                                pass
+                            try:
+                                comm.synchronize()
+                            except Exception:
+                                pass
+                            # Duplicate-work checks: sampler type and RNG fingerprints
+                            try:
+                                world_size = comm.get_world_size()
+                                if world_size > 1 and dist.is_initialized():
+                                    # sampler name
+                                    sampler_name = None
+                                    try:
+                                        dl = getattr(self.trainer._trainer, 'data_loader', None)
+                                        if dl is not None and hasattr(dl, 'sampler'):
+                                            sampler_name = dl.sampler.__class__.__name__
+                                    except Exception:
+                                        sampler_name = None
+
+                                    # RNG fingerprints
+                                    try:
+                                        import numpy as _np
+                                        py_state = random.getstate()
+                                        py_digest = hash(str(py_state[1][:10]))
+                                    except Exception:
+                                        py_digest = None
+                                    try:
+                                        np_state = None
+                                        if 'numpy' in globals():
+                                            np_state = _np.random.get_state()
+                                            np_digest = hash(str(np_state[1][:10]))
+                                        else:
+                                            np_digest = None
+                                    except Exception:
+                                        np_digest = None
+                                    try:
+                                        torch_digest = None
+                                        tr = torch.get_rng_state()
+                                        try:
+                                            torch_digest = hash(tr.cpu().numpy().tobytes())
+                                        except Exception:
+                                            torch_digest = hash(str(tr))
+                                    except Exception:
+                                        torch_digest = None
+
+                                    payload = {'sampler': sampler_name, 'py': py_digest, 'np': np_digest, 'torch': torch_digest}
+                                    try:
+                                        gathered = [None] * world_size
+                                        dist.all_gather_object(gathered, payload)
+                                        # analyze gathered for obvious duplicates
+                                        samplers = [g.get('sampler') for g in gathered if g]
+                                        if any(s is None for s in samplers) is False:
+                                            # if not using DistributedSampler, warn
+                                            if not all(s == 'DistributedSampler' for s in samplers):
+                                                if comm.is_main_process():
+                                                    logging.getLogger('detectron2').warning(
+                                                        'Sampler names across ranks: %s. Consider using DistributedSampler to avoid duplicated work.' % samplers
+                                                    )
+                                        # check RNG duplicates
+                                        pylist = [g.get('py') for g in gathered if g]
+                                        torchlist = [g.get('torch') for g in gathered if g]
+                                        if len(set(pylist)) < len(pylist) or len(set(torchlist)) < len(torchlist):
+                                            if comm.is_main_process():
+                                                logging.getLogger('detectron2').warning(
+                                                    'Detected identical RNG fingerprints across ranks. This may cause duplicated data augmentations/work. Ensure each rank has a unique seed.'
+                                                )
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                def after_step(self):
+                    try:
+                        cfg = getattr(self.trainer, 'cfg', None)
+                        eval_period = 0
+                        if cfg is not None:
+                            eval_period = int(getattr(cfg.TEST, 'EVAL_PERIOD', 0) or 0)
+                        cur_iter = int(getattr(self.trainer, 'iter', 0))
+                        # If we just ran an evaluation, sync again to ensure clean state
+                        if eval_period > 0 and (cur_iter % eval_period) == 0:
+                            try:
+                                torch.cuda.synchronize()
+                            except Exception:
+                                pass
+                            try:
+                                comm.synchronize()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+            # add hook near start so its before_step runs before EvalHook's after_step
+            hooks_list.insert(0, PrePostEvalSyncHook())
+            # Also insert explicit pre/post barrier hooks around any EvalHook
+            # instances to force an explicit comm/ CUDA sync before and after
+            # evaluation. This is a lightweight, non-invasive way to ensure
+            # all ranks have reached the same point when EvalHook runs.
+            try:
+                class BarrierHook(hooks.HookBase):
+                    def __init__(self, when: str = "pre"):
+                        # when: 'pre' runs barrier in before_step, 'post' runs in after_step
+                        self.when = when
+
+                    def before_step(self):
+                        if self.when != "pre":
+                            return
+                        try:
+                            torch.cuda.synchronize()
+                        except Exception:
+                            pass
+                        try:
+                            comm.synchronize()
+                        except Exception:
+                            pass
+
+                    def after_step(self):
+                        if self.when != "post":
+                            return
+                        try:
+                            torch.cuda.synchronize()
+                        except Exception:
+                            pass
+                        try:
+                            comm.synchronize()
+                        except Exception:
+                            pass
+
+                # Rebuild hooks_list inserting barriers around EvalHook instances
+                new_hooks = []
+                for h in hooks_list:
+                    try:
+                        if h.__class__.__name__ == "EvalHook":
+                            new_hooks.append(BarrierHook("pre"))
+                            new_hooks.append(h)
+                            new_hooks.append(BarrierHook("post"))
+                            continue
+                    except Exception:
+                        pass
+                    new_hooks.append(h)
+                hooks_list = new_hooks
+            except Exception:
+                pass
+        except Exception:
+            pass
         # If the user explicitly requested no evaluation via the `no:eval`
         # token, disable Detectron2's EvalHook. We check `cfg.NO_EVAL` so
         # evaluation is only disabled when explicitly requested.
@@ -336,6 +500,38 @@ class Trainer(DefaultTrainer):
                         self.start_iter = int(it)
                         try:
                             setattr(self._trainer, 'iter', int(it))
+                        except Exception:
+                            pass
+                        # Clamp scheduler state to valid range when resuming.
+                        # Some ParamScheduler implementations compute a ratio
+                        # using `last_epoch / _max_iter`. If `last_epoch` slightly
+                        # exceeds `_max_iter` (e.g., due to off-by-one in saved
+                        # metadata), the scheduler can raise. Ensure the saved
+                        # iteration is clamped to the scheduler's max range.
+                        try:
+                            sched = getattr(self, 'scheduler', None)
+                            if sched is not None:
+                                # prefer scheduler's _max_iter if present
+                                max_for_sched = getattr(sched, '_max_iter', None)
+                                if max_for_sched is None:
+                                    max_for_sched = getattr(self, 'max_iter', None)
+                                if max_for_sched is not None:
+                                    max_for_sched = int(max_for_sched)
+                                    last = int(it)
+                                    if last > max_for_sched:
+                                        last = max_for_sched
+                                    # set common scheduler bookkeeping fields
+                                    try:
+                                        if hasattr(sched, 'last_epoch'):
+                                            sched.last_epoch = last
+                                    except Exception:
+                                        pass
+                                    try:
+                                        # torch schedulers may expose _step_count
+                                        if hasattr(sched, '_step_count'):
+                                            sched._step_count = last + 1
+                                    except Exception:
+                                        pass
                         except Exception:
                             pass
                         logging.getLogger('detectron2').info(f"Resuming: set start_iter to {self.start_iter} from {ckpt_path}")
@@ -559,6 +755,8 @@ if __name__ == "__main__":
     parser.add_argument('--EVAL_FLAG', type=int, default=1)
     # Convenience: output directory (mapped to OUTPUT_DIR override)
     parser.add_argument('--output', default='/workspace/output')
+    parser.add_argument('--eval-num-images', type=int, default=None,
+                        help='If set, restrict evaluation to this many images by creating a temporary subset COCO json for DATASETS.TEST')
     args = parser.parse_args()
     # If user provided train/val JSONs via these convenience flags, register them
     # under repository-local names and translate into cfg overrides appended
@@ -609,6 +807,29 @@ if __name__ == "__main__":
 
         train_name = "drone_train_polygons"
         val_name = "drone_val_polygons"
+        # Optionally restrict validation set size for faster eval/debug runs
+        try:
+            eval_num = int(getattr(args, 'eval_num_images', 0) or 0)
+        except Exception:
+            eval_num = 0
+        if eval_num and val_json and os.path.isfile(val_json):
+            try:
+                import json, tempfile
+                with open(val_json, 'r') as _vf:
+                    _vj = json.load(_vf)
+                _imgs = _vj.get('images', [])[:eval_num]
+                _ids = {i.get('id') for i in _imgs if 'id' in i}
+                _anns = [a for a in _vj.get('annotations', []) if a.get('image_id') in _ids]
+                _new = {'images': _imgs, 'annotations': _anns, 'categories': _vj.get('categories', [])}
+                _tf = tempfile.NamedTemporaryFile(delete=False, suffix='.json')
+                with open(_tf.name, 'w') as _wf:
+                    json.dump(_new, _wf)
+                val_json = _tf.name
+                # when we replace the val json with a temp file we avoid rewriting roots
+                val_reg_root = ""
+                print(f"Using subset val json for evaluation: {_tf.name} (first {eval_num} images)")
+            except Exception:
+                pass
         if train_json and os.path.isfile(train_json) and register_coco_instances is not None:
             register_coco_instances(train_name, {}, train_json, train_reg_root)
             dataset_overrides.extend(["DATASETS.TRAIN", "('" + train_name + "',)"])
