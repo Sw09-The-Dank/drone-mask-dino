@@ -30,12 +30,17 @@ RUN set -eux; \
 
 # Upgrade pip and install Python requirements via pip
 RUN set -eux; \
-    python -m pip install --upgrade pip setuptools wheel; \
+    python -m pip install --upgrade pip "setuptools<81" wheel; \
     # Install project requirements and MaskDINO-specific requirements; fail build on error
     pip install --no-cache-dir -r /workspace/requirements.txt; \
     pip install --no-cache-dir -r /workspace/MaskDINO-requirements.txt; \
     # Ensure `timm` is present (some base images need it explicitly)
-    python -m pip install --no-cache-dir timm
+    python -m pip install --no-cache-dir timm; \
+    # Gradio for the demo UI
+    python -m pip install --no-cache-dir gradio
+
+# Fail early if setuptools/pkg_resources is unavailable (detectron2 import dependency)
+RUN python -c "import setuptools, pkg_resources; print('BUILD-CHECK setuptools', setuptools.__version__, 'pkg_resources OK')"
 
 # Ensure OpenCV is installed (try full package, fall back to headless)
 RUN set -eux; \
@@ -55,39 +60,21 @@ COPY . /workspace
 # Ensure the workspace and embedded MaskDINO package are on PYTHONPATH so imports
 # like `from MaskDINO.maskdino.config import ...` resolve when running from the
 # mounted repository root.
-ENV PYTHONPATH=/workspace/MaskDINO:/workspace:${PYTHONPATH:-}
+ENV PYTHONPATH=/workspace/MaskDINO:/workspace
 
-# Ensure CUDA and common loader paths are available for runtime shared libs
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}
+# Ensure CUDA and common loader paths are available for runtime shared libs.
+# Include both lib and lib64 HPC-X layouts plus x86_64/aarch64 system paths.
+ENV LD_LIBRARY_PATH=/opt/hpcx/ucx/lib:/opt/hpcx/ucx/lib64:/opt/hpcx/ucc/lib:/opt/hpcx/ucc/lib64:/opt/hpcx/ompi/lib:/opt/hpcx/ompi/lib64:/opt/hpcx/lib:/opt/hpcx/lib64:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu:${LD_LIBRARY_PATH:-}
 
 ## Install detectron2 (prefer local source) and common extras before ops build
 RUN set -eux; \
-    # Attempt to install UCX/UCC runtime packages from APT (may not be available
-    # on all base images). Non-fatal: `|| true` lets us continue to the tarball
-    # installation fallback below.
-    apt-get update; \
-    apt-get install -y --no-install-recommends libucx1 libucx-dev libucx-tools libucc1 libucc-dev || true; \
-    # If a host HPC-X install exists, move it out of the way so we can place
-    # a known-good runtime into /opt/hpcx for in-container use during build.
-    if [ -d /opt/hpcx ]; then mv /opt/hpcx /opt/hpcx.disabled || true; fi; \
-    # Download and extract a prebuilt HPC-X / UCX+UCC runtime tarball into
-    # /opt/hpcx so that `libucc.so.1` is present for Python/PyTorch imports
-    # during pip metadata generation. REPLACE the placeholder URL below with a
-    # vendor-provided HPC-X/UCX+UCC tarball URL appropriate for your platform.
-    set +e; \
-    if [ -z "${HPCX_TARBALL_URL:-}" ]; then \
-        echo "NOTE: HPCX_TARBALL_URL not set; using placeholder URL (replace me)"; \
+    # Ensure matching HPC-X UCX/UCC libraries are preferred together when present.
+    # This avoids torch import failures from mixing UCC with incompatible UCX libs.
+    if [ -d /opt/hpcx/ucx ] && [ -d /opt/hpcx/ucc ]; then \
+        export LD_LIBRARY_PATH="/opt/hpcx/ucx/lib:/opt/hpcx/ucx/lib64:/opt/hpcx/ucc/lib:/opt/hpcx/ucc/lib64:/opt/hpcx/ompi/lib:/opt/hpcx/ompi/lib64:/opt/hpcx/lib:/opt/hpcx/lib64:${LD_LIBRARY_PATH}"; \
     fi; \
-    mkdir -p /opt; \
-    if curl -fSsL -o /tmp/hpcx.tar.gz "${HPCX_TARBALL_URL:-https://example.com/hpcx-<version>-x86_64.tar.gz}"; then \
-        tar -C /opt -xzf /tmp/hpcx.tar.gz || true; \
-    else \
-        echo "Warning: failed to download HPC-X tarball; continuing without it"; \
-    fi; \
-    set -e; \
-    # ensure pip tools are up to date and set LD so the extracted runtime is used
-    export LD_LIBRARY_PATH=/opt/hpcx/lib:$LD_LIBRARY_PATH; \
-    python -m pip install --upgrade pip setuptools wheel; \
+    python -c "import torch; print('torch import ok')"; \
+    python -m pip install --upgrade pip "setuptools<81" wheel; \
     if [ -d /workspace/detectron2 ]; then \
         python -m pip install -e /workspace/detectron2 --no-build-isolation; \
     else \
@@ -125,9 +112,9 @@ RUN chmod +x /workspace/prepare_patch.sh /workspace/build_make.sh
 # Run the steps in sequence; normalize line endings and invoke with bash so
 # CRLF shebangs don't break in Linux build environments.
 RUN set -eux; \
-    sed -i 's/\r$//' /workspace/prepare_patch.sh /workspace/build_make.sh /workspace/create_shims.py || true; \
-    sed -i 's/\r$//' /workspace/scripts/*.sh || true; \
-    chmod +x /workspace/prepare_patch.sh /workspace/build_make.sh /workspace/scripts/*.sh || true; \
+    sed -i 's/\r$//' /workspace/prepare_patch.sh /workspace/build_make.sh /workspace/create_shims.py; \
+    sed -i 's/\r$//' /workspace/scripts/*.sh ; \
+    chmod +x /workspace/prepare_patch.sh /workspace/build_make.sh /workspace/scripts/*.sh ; \
     /bin/bash /workspace/prepare_patch.sh && /bin/bash /workspace/build_make.sh && python3 /workspace/create_shims.py
 
 
@@ -143,4 +130,7 @@ RUN chmod +x /workspace/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # issues when the host mounts the repo over `/workspace` at runtime.
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python","MaskDINO/demo/demo.py","--config-file","/workspace/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"]
+
+# Expose Gradio default port for the web UI
+EXPOSE 7860
 
