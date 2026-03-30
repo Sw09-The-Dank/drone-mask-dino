@@ -55,6 +55,10 @@ _predictor_cache = {
     "cfg": None,
 }
 
+# Keep JSON payloads bounded so Gradio textbox rendering does not stall UI.
+MAX_JSON_INSTANCES_PER_IMAGE = 100
+MAX_TEXTBOX_JSON_CHARS = 250000
+
 
 def _release_predictor_cache():
     """Delete cached predictor and free GPU memory."""
@@ -237,28 +241,35 @@ def get_cached_predictor(model_type: str, config_file: Optional[str], weights: O
     return _predictor_cache["predictor"], _predictor_cache["cfg"]
 
 
-def prepare_output(prediction, image, cfg):
+def prepare_output(prediction, image, cfg, include_json: bool = True):
     out_json = {
         "instances": [],
     }
     instances = prediction.get("instances", None)
     if instances is None:
-        return image, json.dumps(out_json, indent=2)
+        return image, out_json if include_json else None
 
     cpu_instances = instances.to("cpu")
     boxes = cpu_instances.pred_boxes.tensor.numpy() if cpu_instances.has("pred_boxes") else None
     scores = cpu_instances.scores.numpy() if cpu_instances.has("scores") else None
     classes = cpu_instances.pred_classes.numpy() if cpu_instances.has("pred_classes") else None
 
-    for i in range(len(cpu_instances)):
-        entry = {}
-        if boxes is not None:
-            entry["bbox"] = boxes[i].tolist()
-        if scores is not None:
-            entry["score"] = float(scores[i])
-        if classes is not None:
-            entry["class"] = int(classes[i])
-        out_json["instances"].append(entry)
+    if include_json:
+        total_instances = len(cpu_instances)
+        limit = min(total_instances, MAX_JSON_INSTANCES_PER_IMAGE)
+        for i in range(limit):
+            entry = {}
+            if boxes is not None:
+                entry["bbox"] = boxes[i].tolist()
+            if scores is not None:
+                entry["score"] = float(scores[i])
+            if classes is not None:
+                entry["class"] = int(classes[i])
+            out_json["instances"].append(entry)
+        if total_instances > limit:
+            out_json["truncated"] = True
+            out_json["instances_returned"] = int(limit)
+            out_json["instances_total"] = int(total_instances)
 
     # Visualization
     try:
@@ -357,7 +368,9 @@ def prepare_output(prediction, image, cfg):
                 pad = max(2, int(self._min_dist // 2))
 
                 attempt_y = y
-                while True:
+                max_attempts = 200
+                attempts = 0
+                while attempts < max_attempts:
                     lab_rect = (x, attempt_y - label_h, x + label_w, attempt_y)
                     conflict = False
                     for r in self._occupied_rects:
@@ -367,12 +380,19 @@ def prepare_output(prediction, image, cfg):
                             break
                     if conflict:
                         attempt_y += self._y_offset
+                        attempts += 1
                         continue
                     too_close = any(self._distance((x, attempt_y), p) < self._min_dist for p in self._used_positions)
                     if too_close:
                         attempt_y += self._y_offset
+                        attempts += 1
                         continue
                     break
+
+                if attempts >= max_attempts:
+                    # Fall back to the original location if no collision-free slot
+                    # is found quickly to avoid UI hangs on dense predictions.
+                    attempt_y = y
 
                 self._used_positions.append((x, attempt_y))
                 return super().draw_text(text, (x, attempt_y), **kwargs)
@@ -388,7 +408,7 @@ def prepare_output(prediction, image, cfg):
     except Exception:
         vis = image
 
-    return vis, json.dumps(out_json, indent=2)
+    return vis, out_json if include_json else None
 
 
 _IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp'}
@@ -598,8 +618,16 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
     except Exception:
         input_format = "BGR"
 
+    # Diagnostic: Log what config/weights were actually loaded
+    actual_cfg = config_file.strip() if config_file else "(none)"
+    actual_wts = weights.strip() if weights else "(none)"
+    print(f"[DIAG] Loaded config={actual_cfg}, weights={actual_wts}, input_format={input_format}")
+
     vis_list = []
     json_list = []
+    
+    # Track image size for MaskDINO coordinate rescaling fix
+    original_img_size = None
     for i, img in enumerate(proc_imgs):
         try:
             # Prepare predictor input based on config input format.
@@ -615,6 +643,16 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
             except Exception:
                 pred_img = img
 
+            # Diagnostic: log input image shape
+            if i == 0:
+                try:
+                    import numpy as _np
+                    if isinstance(pred_img, _np.ndarray):
+                        print(f"[DIAG] Input image shape: {pred_img.shape} (H x W x C or similar)")
+                        original_img_size = pred_img.shape[:2]  # Store (H, W)
+                except Exception:
+                    pass
+
             outputs = predictor(pred_img)
             # Move instances to CPU immediately to free GPU mask tensors,
             # which are the main VRAM cost when DETECTIONS_PER_IMAGE is high.
@@ -623,8 +661,25 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
                     outputs["instances"] = outputs["instances"].to("cpu")
             except Exception:
                 pass
+            
+            # Diagnostic: log raw model output before filtering
             try:
-                torch.cuda.empty_cache()
+                raw_inst = outputs.get("instances", None)
+                if raw_inst is not None and len(raw_inst) > 0 and i == 0:
+                    print(f"[DIAG] image {i}: raw model output {len(raw_inst)} instances")
+                    if raw_inst.has("scores"):
+                        scores = raw_inst.scores
+                        classes = raw_inst.pred_classes if raw_inst.has("pred_classes") else None
+                        print(f"       scores: {float(scores.min()):.3f}-{float(scores.max()):.3f}, "
+                              f"classes: {set(int(c.item()) for c in classes) if classes is not None else 'N/A'}")
+                    # Check box coordinates
+                    if raw_inst.has("pred_boxes"):
+                        try:
+                            boxes_list = raw_inst.pred_boxes.tensor.numpy()
+                            if len(boxes_list) > 0:
+                                print(f"       box[0]: {boxes_list[0]} (x1, y1, x2, y2)")
+                        except Exception:
+                            pass
             except Exception:
                 pass
             # MaskDINO instance inference returns top-k predictions but does not
@@ -639,6 +694,16 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
                     after_n = int(keep.sum().item()) if hasattr(keep, "sum") else len(outputs["instances"])
                     if before_n > 0 and after_n == 0:
                         print(f"[INFO] image {i}: threshold {float(score_thresh):.2f} filtered all {before_n} detections")
+                    elif after_n > 0:
+                        try:
+                            kept_scores = outputs["instances"].scores
+                            top_score = float(kept_scores.max().item()) if len(kept_scores) else 0.0
+                        except Exception:
+                            top_score = -1.0
+                        print(
+                            f"[INFO] image {i}: threshold {float(score_thresh):.2f} kept {after_n}/{before_n} detections"
+                            + (f" (top score {top_score:.3f})" if top_score >= 0.0 else "")
+                        )
 
                     # Degenerate output detector: many full-confidence detections in one class.
                     try:
@@ -659,34 +724,57 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
                         pass
             except Exception:
                 pass
-            vis, out_json = prepare_output(outputs, img, cfg)
+            vis, out_json = prepare_output(outputs, img, cfg, include_json=bool(return_json))
             # prepare_output returns RGB-arrays; Gradio accepts numpy arrays
             try:
                 vis_list.append(vis)
             except Exception:
                 vis_list.append(vis)
-            try:
-                json_list.append(json.loads(out_json))
-            except Exception:
-                json_list.append(out_json)
+            if return_json:
+                json_list.append(out_json if isinstance(out_json, dict) else {"error": "JSON generation failed"})
         except Exception as e:
             print(f"[WARN] Inference failed for image {i}: {e}")
-            json_list.append({"error": str(e)})
+            if return_json:
+                json_list.append({"error": str(e)})
 
     # If only a single input was provided, return a single image instead of a list
     if not is_batch:
         vis = vis_list[0] if vis_list else None
-        out_json = json.dumps(json_list[0], indent=2) if (return_json and json_list) else ""
+        if return_json and json_list:
+            out_json = json.dumps(json_list[0], separators=(",", ":"))
+            if len(out_json) > MAX_TEXTBOX_JSON_CHARS:
+                out_json = json.dumps(
+                    {
+                        "warning": "JSON output truncated for UI responsiveness.",
+                        "chars": len(out_json),
+                    },
+                    indent=2,
+                )
+        else:
+            out_json = ""
         return vis, out_json
 
     # Batch case: return gallery (list of images) and JSON array if requested
-    out_json = json.dumps(json_list, indent=2) if return_json else ""
+    if return_json:
+        out_json = json.dumps(json_list, separators=(",", ":"))
+        if len(out_json) > MAX_TEXTBOX_JSON_CHARS:
+            out_json = json.dumps(
+                {
+                    "warning": "JSON output truncated for UI responsiveness.",
+                    "images": len(json_list),
+                    "chars": len(out_json),
+                },
+                indent=2,
+            )
+    else:
+        out_json = ""
     return vis_list, out_json
 
 
 def _release_inference_gpu_memory():
-    """Release GPU memory held by the cached predictor after inference completes."""
+    """Release GPU memory held by the cached predictor on demand."""
     _release_predictor_cache()
+    return "Model cache cleared. GPU memory released."
 
 
 def launch_ui():
@@ -765,12 +853,19 @@ def launch_ui():
             except Exception as e:
                 return [], f"Error: {e}"
 
-        run_btn = gr.Button("Run Inference")
+        with gr.Row():
+            run_btn = gr.Button("Run Inference")
+            unload_btn = gr.Button("Unload Model")
         run_btn.click(
             _run,
             inputs=[img_in, model_type, config_file, weights, score, return_json],
             outputs=[img_out, json_out],
-        ).then(fn=_release_inference_gpu_memory, inputs=None, outputs=None)
+        )
+        unload_btn.click(
+            _release_inference_gpu_memory,
+            inputs=None,
+            outputs=[json_out],
+        )
 
         _folder_js = """
         async () => {

@@ -446,15 +446,5 @@ sudo docker run --gpus all --rm -it \
 
 
 
-  docker build --no-cache --pull --platform linux/amd64 -f Dockerfile.demo -t maskdino-demo:latest .
+sudo docker build -f Dockerfile.demo -t maskdino-demo:latest .
 
-DGX/Spark troubleshooting:
-
-- If the build log shows `apt-get install ... libucx1 ... libucc1` or `HPCX_TARBALL_URL` placeholder text, you are building an older copy of `Dockerfile.demo`.
-- Verify the local file before building:
-
-```bash
-grep -nE "libucx1|libucc1|HPCX_TARBALL_URL|example.com/hpcx" Dockerfile.demo
-```
-
-Expected: no output.
