@@ -245,3 +245,21 @@ sudo docker run --gpus all --rm -it \
     bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500
   "
 ```
+
+
+
+docker run --gpus all --rm -it ^
+  --shm-size=8g ^
+  -v "%cd%:/workspace" ^
+  -w /workspace ^
+  maskdino-demo:latest ^
+  python train.py  --no-resume
+
+
+  docker run --gpus all --rm -it ^
+  --shm-size=8g ^
+  -p 7860:7860 ^
+  -v "%cd%:/workspace" ^
+  -w /workspace ^
+  maskdino-demo:latest ^
+  python scripts/inference_ui.py

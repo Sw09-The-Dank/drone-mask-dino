@@ -1,0 +1,42 @@
+# Inherit Detectron2 model-zoo config exactly like train.py starts from:
+# model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml")
+_BASE_: detectron2/configs/COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml
+
+# Project defaults that mirror train.py effective settings.
+DATASETS:
+  # Registered by run_default_trainer(...)
+  TRAIN:
+    - drone_train_polygons
+  TEST:
+    - drone_val_polygons
+
+DATALOADER:
+  # Keep workers moderate for Docker stability.
+  NUM_WORKERS: 8
+  # Helps minority classes appear more often in training.
+  SAMPLER_TRAIN: RepeatFactorTrainingSampler
+  REPEAT_THRESHOLD: 0.001
+
+SOLVER:
+  IMS_PER_BATCH: 6
+  BASE_LR: 0.00025
+  MAX_ITER: 3000
+  WARMUP_ITERS: 200
+  STEPS: [2100, 2700]
+  CHECKPOINT_PERIOD: 250
+
+TEST:
+  EVAL_PERIOD: 500
+
+MODEL:
+  ROI_HEADS:
+    BATCH_SIZE_PER_IMAGE: 256
+    # train.py may infer this from JSON categories at runtime.
+    NUM_CLASSES: 8
+
+# train.py explicitly sets OUTPUT_DIR near the end of setup.
+OUTPUT_DIR: output_maskdino/trainer_output
+
+# Note about weights:
+# - train.py sets MODEL.WEIGHTS from model_zoo by default, then resume_or_load()
+#   will restore from last checkpoint when resume=True and one exists.

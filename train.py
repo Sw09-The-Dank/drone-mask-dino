@@ -2,9 +2,29 @@ import os
 import random
 import math
 import json
+import sys
+import subprocess
+import importlib
 import numpy as np
 import torch
-from detectron2.engine import HookBase
+
+try:
+    from detectron2.engine import HookBase
+except ModuleNotFoundError as e:
+    # Some container images miss setuptools at runtime, which detectron2 imports via pkg_resources.
+    if getattr(e, "name", "") == "pkg_resources":
+        try:
+            print("[INFO] Missing pkg_resources; installing compatible setuptools and retrying detectron2 import...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "setuptools<81"])
+            importlib.invalidate_caches()
+            from detectron2.engine import HookBase
+        except Exception as install_e:
+            raise RuntimeError(
+                "detectron2 import failed because pkg_resources is missing. "
+                "Install setuptools in the runtime environment and retry."
+            ) from install_e
+    else:
+        raise
 
 # standard utilities used across this script
 import os
@@ -23,12 +43,6 @@ import numpy as np
 
 # torch is used throughout; ensure it's available and provide DDP helpers
 import torch
-import torch.distributed as dist
-
-dist.init_process_group(
-    backend="nccl",
-    timeout=datetime.timedelta(seconds=30)
-)
 
 # -----------------------------
 # SANITY CHECK: CUDA
@@ -37,6 +51,116 @@ dist.init_process_group(
 print("PyTorch version:", getattr(torch, '__version__', 'n/a'))
 print("CUDA available:", torch.cuda.is_available())
 print("CUDA version:", getattr(torch.version, 'cuda', 'n/a'))
+
+
+
+def _resolve_detectron2_cfg_file(cfg_key_or_path: str) -> str:
+    """Resolve a detectron2 config file path without requiring pkg_resources/model_zoo."""
+    if not cfg_key_or_path:
+        return cfg_key_or_path
+
+    if os.path.isfile(cfg_key_or_path):
+        return cfg_key_or_path
+
+    normalized = cfg_key_or_path.replace("\\", "/").lstrip("/")
+    if normalized.startswith("configs/"):
+        normalized = normalized[len("configs/"):]
+
+    candidates = [
+        os.path.join("detectron2", "configs", normalized),
+        os.path.join("/workspace", "detectron2", "configs", normalized),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return cfg_key_or_path
+
+
+def _ensure_pkg_resources_available() -> bool:
+    """Ensure pkg_resources is importable in the current runtime.
+
+    Returns True when importable, otherwise False.
+    """
+    try:
+        import pkg_resources  # noqa: F401
+        return True
+    except Exception:
+        pass
+
+    try:
+        print("[INFO] pkg_resources not found; attempting to install compatible setuptools...")
+        # Newer setuptools builds may omit pkg_resources in some environments.
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "setuptools<81"])
+        importlib.invalidate_caches()
+    except Exception as e:
+        print(f"[WARN] Failed to install setuptools automatically: {e}")
+        return False
+
+    try:
+        import pkg_resources  # noqa: F401
+        return True
+    except Exception as e:
+        print(f"[WARN] pkg_resources still unavailable after setuptools install: {e}")
+        return False
+
+
+def _get_model_zoo():
+    """Return detectron2.model_zoo after ensuring pkg_resources is available."""
+    if not _ensure_pkg_resources_available():
+        raise RuntimeError("pkg_resources is unavailable; cannot import detectron2.model_zoo")
+
+    try:
+        from detectron2 import model_zoo as _model_zoo
+        return _model_zoo
+    except Exception as e:
+        raise RuntimeError(f"Failed to import detectron2.model_zoo: {e}") from e
+
+
+def _running_in_container() -> bool:
+    return os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
+
+
+def _get_shm_size_bytes():
+    try:
+        stat = os.statvfs("/dev/shm")
+        return int(stat.f_frsize * stat.f_blocks)
+    except Exception:
+        return None
+
+
+def _configure_torch_runtime() -> None:
+    strategy = os.environ.get("PYTORCH_SHARING_STRATEGY")
+    shm_bytes = _get_shm_size_bytes()
+    if not strategy and (shm_bytes is not None and shm_bytes < 1024 * 1024 * 1024):
+        strategy = "file_system"
+
+    if strategy:
+        try:
+            torch.multiprocessing.set_sharing_strategy(strategy)
+            print(f"[INFO] torch multiprocessing sharing strategy: {strategy}")
+        except Exception as e:
+            print(f"[WARN] Could not set torch multiprocessing sharing strategy to {strategy}: {e}")
+
+
+def _choose_default_num_workers(cli_num_workers=None) -> int:
+    if cli_num_workers is not None:
+        return max(0, int(cli_num_workers))
+
+    env_num_workers = os.environ.get("TRAIN_NUM_WORKERS")
+    if env_num_workers is not None:
+        try:
+            return max(0, int(env_num_workers))
+        except Exception:
+            print(f"[WARN] Ignoring invalid TRAIN_NUM_WORKERS={env_num_workers!r}")
+
+    shm_bytes = _get_shm_size_bytes()
+    if _running_in_container() and (shm_bytes is None or shm_bytes < 1024 * 1024 * 1024):
+        return 0
+
+    return 8
+
+
+_configure_torch_runtime()
 
 
 def setup_ddp_from_env():
@@ -156,57 +280,6 @@ def finalize_ddp(wait_seconds: float = 3.0):
     except Exception:
         pass
 
-    # init process group if needed
-    try:
-        if torch.distributed.is_available() and not torch.distributed.is_initialized() and world_size > 1:
-            backend = 'nccl' if torch.cuda.is_available() else 'gloo'
-            try:
-                torch.distributed.init_process_group(backend=backend, init_method='env://')
-                rank = os.environ.get('RANK', os.environ.get('LOCAL_RANK', '0'))
-                print(f"DDP INIT: backend={backend} RANK={rank} LOCAL_RANK={local_rank} WORLD_SIZE={world_size}")
-                # create detectron2 local process group so utilities like get_local_rank() work
-                try:
-                    try:
-                        local_world_size = int(os.environ.get('LOCAL_WORLD_SIZE', os.environ.get('LOCAL_SIZE', '1')))
-                    except Exception:
-                        local_world_size = 1
-                    if local_world_size < 1:
-                        local_world_size = 1
-                    # import lazily to avoid hard dependency if detectron2 isn't used
-                    try:
-                        from detectron2.utils import comm as d2comm
-                        d2comm.create_local_process_group(local_world_size)
-                        print(f"Created detectron2 local process group with {local_world_size} local workers")
-                    except Exception as e:
-                        print(f"[WARN] Could not create detectron2 local process group: {e}")
-                except Exception:
-                    pass
-            except Exception as e:
-                print(f"[WARN] torch.distributed.init_process_group failed: {e}")
-    except Exception as e:
-        print(f"[WARN] DDP setup problem: {e}")
-    # If the process group was initialized elsewhere (earlier), still ensure detectron2 local PG exists
-    try:
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            try:
-                from detectron2.utils import comm as d2comm
-                # determine local workers per machine; prefer env vars, fallback to 1
-                try:
-                    local_world_size = int(os.environ.get('LOCAL_WORLD_SIZE', os.environ.get('LOCAL_SIZE', '1')))
-                except Exception:
-                    local_world_size = 1
-                if local_world_size < 1:
-                    local_world_size = 1
-                try:
-                    d2comm.create_local_process_group(local_world_size)
-                except Exception:
-                    # may have been created already; ignore
-                    pass
-            except Exception:
-                pass
-    except Exception:
-        pass
-
 
 
 # (DDP initialization is handled by `setup_ddp_from_env()` where needed)
@@ -219,10 +292,14 @@ CLASS_NAMES = ["rotor", "frame", "camera", "landinggear", "air2s", "neo", "mavic
 
 
 class CheckpointCleanupHook(HookBase):
-    def __init__(self, output_dir, keep=4):
+    def __init__(self, output_dir, keep=4, period=500):
         self.output_dir = output_dir
         self.keep = keep
+        self.period = period
     def after_step(self):
+        # Only clean up right after a checkpoint is written (every `period` steps)
+        if (self.trainer.iter + 1) % self.period != 0:
+            return
         import glob, os
         checkpoint_files = sorted(
             glob.glob(os.path.join(self.output_dir, "model_*.pth")),
@@ -251,19 +328,39 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                         num_workers=None,
                         batch_size_per_image=None,
                         num_classes=None,
-                        config_file=None,
+                        config_file="maskrcnn_config.yaml",
                         weights=None,
                         extra_cfg=None,
                         resume=True,
-                        epochs=None):
+                        epochs=None,
+                        eval_score_thresh=None,
+                        eval_detections_per_image=None,
+                        eval_focus_on_box=None,
+                        fast_eval=False,
+                        eval_bbox_only=False):
+    _ensure_pkg_resources_available()
     try:
         from detectron2.data.datasets import register_coco_instances
         from detectron2.engine import DefaultTrainer
         from detectron2.config import get_cfg
-        from detectron2 import model_zoo
     except Exception as e:
-        print("[ERROR] detectron2 is required to run the trainer:", e)
-        return
+        # Retry once after ensuring setuptools/pkg_resources for environments
+        # where detectron2's dependency chain imports pkg_resources lazily.
+        if "pkg_resources" in str(e):
+            if _ensure_pkg_resources_available():
+                try:
+                    from detectron2.data.datasets import register_coco_instances
+                    from detectron2.engine import DefaultTrainer
+                    from detectron2.config import get_cfg
+                except Exception as e2:
+                    print("[ERROR] detectron2 is required to run the trainer:", e2)
+                    return
+            else:
+                print("[ERROR] detectron2 is required to run the trainer:", e)
+                return
+        else:
+            print("[ERROR] detectron2 is required to run the trainer:", e)
+            return
 
     # Ensure DDP/init and detectron2 local PG exist before constructing DefaultTrainer
     try:
@@ -771,22 +868,25 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
 
     cfg = get_cfg()
     try:
-        cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml"))
-        cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml")
-    except Exception:
-        pass
+        _mz = _get_model_zoo()
+        cfg.merge_from_file(_mz.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
+        cfg.MODEL.WEIGHTS = _mz.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
+    except Exception as e:
+        print(f"[WARN] Could not load default model_zoo config/weights: {e}")
 
    
 
     # Use the sanitized (clean) dataset names for training/testing if available
     cfg.DATASETS.TRAIN = (train_dataset_name,) if isinstance(train_dataset_name, str) else (train_name,)
     cfg.DATASETS.TEST = (val_dataset_name,) if isinstance(val_dataset_name, str) else (val_name,)
-    cfg.DATALOADER.NUM_WORKERS = 12
-    cfg.SOLVER.IMS_PER_BATCH = 12
-    cfg.SOLVER.BASE_LR = 0.00005
+    cfg.DATALOADER.NUM_WORKERS = _choose_default_num_workers()
+    cfg.SOLVER.IMS_PER_BATCH = 4
+    cfg.SOLVER.BASE_LR = 0.00025
     # cfg.SOLVER.STEPS = (3000,4000)
     cfg.SOLVER.MAX_ITER = 3000
+    cfg.SOLVER.CHECKPOINT_PERIOD = 100
     cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 256
+    print(f"[INFO] Default DATALOADER.NUM_WORKERS = {cfg.DATALOADER.NUM_WORKERS}")
 
      # Apply optional config/weight overrides provided by caller (CLI or function args)
     try:
@@ -796,9 +896,10 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                 print(f"[INFO] Merged config file: {config_file}")
             except Exception:
                 try:
-                    # maybe a model_zoo short path
-                    cfg.merge_from_file(model_zoo.get_config_file(config_file))
-                    print(f"[INFO] Merged model_zoo config: {config_file}")
+                    # maybe a short detectron2 config key under detectron2/configs
+                    resolved_cfg = _resolve_detectron2_cfg_file(config_file)
+                    cfg.merge_from_file(resolved_cfg)
+                    print(f"[INFO] Merged detectron2 config key: {config_file} -> {resolved_cfg}")
                 except Exception:
                     print(f"[WARN] Could not load config file: {config_file}")
         if weights:
@@ -826,8 +927,14 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
             cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = int(batch_size_per_image)
             print(f"[INFO] Set MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = {cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE}")
         if num_classes is not None:
-            cfg.MODEL.ROI_HEADS.NUM_CLASSES = int(num_classes)
+            _num_classes = int(num_classes)
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = _num_classes
+            # MaskDINO uses SEM_SEG_HEAD class count for its class embedding.
+            if hasattr(cfg.MODEL, "SEM_SEG_HEAD"):
+                cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = _num_classes
             print(f"[INFO] Set MODEL.ROI_HEADS.NUM_CLASSES = {cfg.MODEL.ROI_HEADS.NUM_CLASSES}")
+            if hasattr(cfg.MODEL, "SEM_SEG_HEAD"):
+                print(f"[INFO] Set MODEL.SEM_SEG_HEAD.NUM_CLASSES = {cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES}")
 
         # Extra dotted cfg overrides, e.g. "SOLVER.BASE_LR=0.001"
         if extra_cfg:
@@ -865,6 +972,71 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                     print(f"[WARN] Failed to apply cfg override '{opt}': {e}")
     except Exception as e:
         print(f"[WARN] Error applying config overrides: {e}")
+
+    # Re-apply sanitized dataset names after config merges unless the user
+    # explicitly overrode DATASETS via --set.
+    try:
+        _datasets_overridden = False
+        if extra_cfg:
+            for _opt in extra_cfg:
+                if not isinstance(_opt, str):
+                    continue
+                _k = _opt.split('=', 1)[0].strip().upper()
+                if _k in ("DATASETS.TRAIN", "DATASETS.TEST"):
+                    _datasets_overridden = True
+                    break
+        if not _datasets_overridden:
+            cfg.DATASETS.TRAIN = (train_dataset_name,) if isinstance(train_dataset_name, str) else (train_name,)
+            cfg.DATASETS.TEST = (val_dataset_name,) if isinstance(val_dataset_name, str) else (val_name,)
+            print(f"[INFO] Enforced sanitized datasets: TRAIN={cfg.DATASETS.TRAIN}, TEST={cfg.DATASETS.TEST}")
+        else:
+            print("[INFO] Keeping user-overridden DATASETS from --set")
+    except Exception as e:
+        print(f"[WARN] Failed to enforce sanitized datasets after config merge: {e}")
+
+    # Optional eval-speed tuning. COCO post-processing can dominate runtime when
+    # too many low-confidence instances/masks are emitted per image.
+    try:
+        if bool(fast_eval):
+            if eval_score_thresh is None:
+                eval_score_thresh = 0.5
+            if eval_detections_per_image is None:
+                eval_detections_per_image = 100
+            if eval_focus_on_box is None:
+                eval_focus_on_box = True
+
+        if eval_detections_per_image is not None:
+            cfg.TEST.DETECTIONS_PER_IMAGE = int(eval_detections_per_image)
+            print(f"[INFO] Set TEST.DETECTIONS_PER_IMAGE = {cfg.TEST.DETECTIONS_PER_IMAGE}")
+
+        if eval_score_thresh is not None:
+            _th = float(eval_score_thresh)
+            try:
+                cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = _th
+                print(f"[INFO] Set MODEL.ROI_HEADS.SCORE_THRESH_TEST = {cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST}")
+            except Exception:
+                pass
+            try:
+                cfg.MODEL.RETINANET.SCORE_THRESH_TEST = _th
+                print(f"[INFO] Set MODEL.RETINANET.SCORE_THRESH_TEST = {cfg.MODEL.RETINANET.SCORE_THRESH_TEST}")
+            except Exception:
+                pass
+            try:
+                if hasattr(cfg.MODEL, "MaskDINO") and hasattr(cfg.MODEL.MaskDINO, "TEST"):
+                    cfg.MODEL.MaskDINO.TEST.OBJECT_MASK_THRESHOLD = _th
+                    print(f"[INFO] Set MODEL.MaskDINO.TEST.OBJECT_MASK_THRESHOLD = {cfg.MODEL.MaskDINO.TEST.OBJECT_MASK_THRESHOLD}")
+            except Exception:
+                pass
+
+        if eval_focus_on_box is not None:
+            try:
+                if hasattr(cfg.MODEL, "MaskDINO") and hasattr(cfg.MODEL.MaskDINO, "TEST"):
+                    cfg.MODEL.MaskDINO.TEST.TEST_FOUCUS_ON_BOX = bool(eval_focus_on_box)
+                    print(f"[INFO] Set MODEL.MaskDINO.TEST.TEST_FOUCUS_ON_BOX = {cfg.MODEL.MaskDINO.TEST.TEST_FOUCUS_ON_BOX}")
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[WARN] Failed to apply eval tuning options: {e}")
         
         
     # Infer number of classes from train JSON categories
@@ -873,13 +1045,22 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
             j = json.load(f)
         cats = j.get("categories", [])
         if cats:
-            cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(cats)
-            print(f"Set NUM_CLASSES = {len(cats)} from train JSON categories")
+            _num_classes = len(cats)
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = _num_classes
+            if hasattr(cfg.MODEL, "SEM_SEG_HEAD"):
+                cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = _num_classes
+            print(f"Set NUM_CLASSES = {_num_classes} from train JSON categories")
+            if hasattr(cfg.MODEL, "SEM_SEG_HEAD"):
+                print(f"[INFO] Set MODEL.SEM_SEG_HEAD.NUM_CLASSES = {cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES}")
         else:
             cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
+            if hasattr(cfg.MODEL, "SEM_SEG_HEAD"):
+                cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = 1
             print("No categories found in train JSON; defaulting NUM_CLASSES=1")
     except Exception:
         cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
+        if hasattr(cfg.MODEL, "SEM_SEG_HEAD"):
+            cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = 1
         print("Could not read train JSON to infer NUM_CLASSES; defaulting to 1")
 
     # If epochs provided, compute SOLVER.MAX_ITER from dataset size and ims_per_batch
@@ -912,8 +1093,6 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
         print(f"[WARN] Failed to compute MAX_ITER from epochs: {e}")
     cfg.OUTPUT_DIR = "output_maskdino/trainer_output"
     os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
-
-    cfg.DATALOADER.NUM_WORKERS = 8
 
     # Monkey-patch annotations_to_instances to dump offending annotations on ValueError
     try:
@@ -1002,9 +1181,67 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     except Exception as e:
         print("[WARN] Could not monkey-patch annotations_to_instances:", e)
 
+    resume_ckpt = None
+    def _find_local_checkpoint(output_dir):
+        """Return best local checkpoint path from output dir, or None."""
+        try:
+            final_pth = os.path.join(output_dir, "model_final.pth")
+            if os.path.isfile(final_pth):
+                return final_pth
+        except Exception:
+            pass
+        try:
+            models = glob.glob(os.path.join(output_dir, "model_*.pth"))
+            if models:
+                models.sort(key=os.path.getmtime, reverse=True)
+                return models[0]
+        except Exception:
+            pass
+        return None
+    try:
+        last_path = os.path.join(cfg.OUTPUT_DIR, "last_checkpoint")
+        if os.path.isfile(last_path):
+            with open(last_path, "r", encoding="utf-8") as f:
+                name = f.read().strip()
+            if name:
+                resume_ckpt = name if os.path.isabs(name) else os.path.join(cfg.OUTPUT_DIR, name)
+    except Exception:
+        resume_ckpt = None
+
     trainer = DefaultTrainer(cfg)
     # resume=True will continue from last checkpoint if present
-    trainer.resume_or_load(resume=bool(resume))
+    try:
+        if bool(resume):
+            print(f"[INFO] resume=True, attempting to load checkpoint from OUTPUT_DIR: {resume_ckpt or '(none found)'}")
+        trainer.resume_or_load(resume=bool(resume))
+    except ValueError as e:
+        msg = str(e)
+        mismatch = "parameter group" in msg and "optimizer" in msg.lower()
+        if bool(resume) and mismatch:
+            print("[WARN] Resume checkpoint optimizer state is incompatible with current model/config.")
+            local_fallback = None
+            if resume_ckpt and os.path.isfile(resume_ckpt):
+                local_fallback = resume_ckpt
+            else:
+                local_fallback = _find_local_checkpoint(cfg.OUTPUT_DIR)
+
+            if local_fallback:
+                cfg.MODEL.WEIGHTS = local_fallback
+                print(f"[WARN] Falling back to weights-only load from local checkpoint: {cfg.MODEL.WEIGHTS}")
+            else:
+                # Avoid hard failure in offline environments when default weights is an URL.
+                if str(cfg.MODEL.WEIGHTS).startswith(("http://", "https://")):
+                    print("[WARN] No local checkpoint found and MODEL.WEIGHTS is a remote URL.")
+                    print("[WARN] Falling back to random initialization (MODEL.WEIGHTS='') for offline run.")
+                    cfg.MODEL.WEIGHTS = ""
+                else:
+                    print(f"[WARN] Falling back to weights-only load from MODEL.WEIGHTS={cfg.MODEL.WEIGHTS}")
+            print("[WARN] To avoid this warning, clear OUTPUT_DIR/last_checkpoint or run with --no-resume.")
+            # Recreate trainer/checkpointer to avoid internal partial-load state assertions.
+            trainer = DefaultTrainer(cfg)
+            trainer.resume_or_load(resume=False)
+        else:
+            raise
     # --- DDP & data-loader sanity checks (help debug multi-node behavior) ---
     try:
         print("[DEBUG] torch.distributed available:", torch.distributed.is_available())
@@ -1042,6 +1279,13 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     except Exception:
         pass
 
+    # Register checkpoint cleanup hook (runs every CHECKPOINT_PERIOD steps, keeps last N checkpoints)
+    try:
+        _ckpt_period = getattr(cfg.SOLVER, 'CHECKPOINT_PERIOD', 100)
+        trainer.register_hooks([CheckpointCleanupHook(cfg.OUTPUT_DIR, keep=4, period=_ckpt_period)])
+    except Exception as e:
+        print(f"[WARN] Could not register CheckpointCleanupHook: {e}")
+
     trainer.train()
 
     # ensure all processes reach this point before evaluation/plotting
@@ -1065,7 +1309,27 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
         try:
             from detectron2.evaluation import COCOEvaluator, inference_on_dataset
             from detectron2.data import build_detection_test_loader
-            evaluator = COCOEvaluator(val_dataset_name, cfg, distributed=False, output_dir=os.path.join(cfg.OUTPUT_DIR, "inference"))
+            eval_tasks = ("bbox",) if bool(eval_bbox_only) else None
+            if eval_tasks is not None:
+                print("[INFO] Evaluation tasks set to bbox-only for faster validation")
+            _eval_out = os.path.join(cfg.OUTPUT_DIR, "inference")
+            try:
+                # detectron2>=0.6 signature: COCOEvaluator(dataset_name, tasks=None, ...)
+                evaluator = COCOEvaluator(
+                    val_dataset_name,
+                    tasks=eval_tasks,
+                    distributed=is_distributed,
+                    output_dir=_eval_out,
+                )
+            except TypeError:
+                # older signature: COCOEvaluator(dataset_name, cfg, ...)
+                evaluator = COCOEvaluator(
+                    val_dataset_name,
+                    cfg,
+                    distributed=is_distributed,
+                    output_dir=_eval_out,
+                    tasks=eval_tasks,
+                )
             val_loader = build_detection_test_loader(cfg, val_dataset_name)
             results = inference_on_dataset(trainer.model, val_loader, evaluator)
             print(f"[INFO] Evaluation results: {results}")
@@ -1589,11 +1853,18 @@ if __name__ == "__main__":
     parser.add_argument('--num-workers', type=int, default=None, help='override DATALOADER.NUM_WORKERS')
     parser.add_argument('--batch-size-per-image', type=int, default=None, help='override MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE')
     parser.add_argument('--num-classes', type=int, default=None, help='override MODEL.ROI_HEADS.NUM_CLASSES')
-    parser.add_argument('--config-file', default=None, help='path to a detectron2 config file (or model_zoo key)')
+    parser.add_argument('--config-file', default="maskrcnn_config.yaml", help='path to a detectron2 config file (or model_zoo key)')
     parser.add_argument('--weights', default=None, help='path or url to weights to set cfg.MODEL.WEIGHTS')
     parser.add_argument('-s', '--set', action='append', dest='set', help='extra cfg override in form KEY=VALUE (dotted path, can be repeated)')
     parser.add_argument('--no-resume', dest='resume', action='store_false', help='start training from scratch (do not resume from last checkpoint)')
     parser.add_argument('--epochs', type=int, default=None, help='number of epochs to train; if set, overrides --max-iter by computing iterations = epochs * ceil(num_images / IMS_PER_BATCH)')
+    parser.add_argument('--fast-eval', action='store_true', help='speed up validation by increasing score threshold, capping detections, and focusing MaskDINO eval on boxes')
+    parser.add_argument('--eval-bbox-only', action='store_true', help='run COCO bbox evaluation only (skip mask metrics) for much faster validation')
+    parser.add_argument('--eval-score-thresh', type=float, default=None, help='override score threshold used during eval/inference (e.g., 0.5)')
+    parser.add_argument('--eval-detections-per-image', type=int, default=None, help='override TEST.DETECTIONS_PER_IMAGE to cap per-image predictions during eval')
+    parser.add_argument('--eval-focus-on-box', dest='eval_focus_on_box', action='store_true', help='for MaskDINO, focus eval outputs on boxes to reduce mask post-processing cost')
+    parser.add_argument('--no-eval-focus-on-box', dest='eval_focus_on_box', action='store_false', help='disable MaskDINO TEST_FOUCUS_ON_BOX override')
+    parser.set_defaults(eval_focus_on_box=None)
 
     args = parser.parse_args()
 
@@ -1619,4 +1890,9 @@ if __name__ == "__main__":
         extra_cfg=args.set,
         resume=args.resume,
         epochs=args.epochs,
+        eval_score_thresh=args.eval_score_thresh,
+        eval_detections_per_image=args.eval_detections_per_image,
+        eval_focus_on_box=args.eval_focus_on_box,
+        fast_eval=args.fast_eval,
+        eval_bbox_only=args.eval_bbox_only,
     )
