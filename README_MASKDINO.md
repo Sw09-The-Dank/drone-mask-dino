@@ -423,9 +423,7 @@ sudo docker run --gpus all --rm -it \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/m_ddp.sh 2 1 0 169.254.18.231 29500 \
-      --fix-json-root --max-iter 10 --base-lr 5e-05 --from-scratch --output /workspace/output \
-      --config-file maskdino_drone_config.yaml \
-      TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 10 
+    --resume 
   "
 
 
@@ -439,9 +437,7 @@ sudo docker run --gpus all --rm -it \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/m_ddp.sh 2 1 1 169.254.18.231 29500 \
-      --fix-json-root --max-iter 10 --base-lr 5e-05 --from-scratch --output /workspace/output \
-      --config-file maskdino_drone_config.yaml \
-      TEST.IMS_PER_BATCH 1 DATALOADER.NUM_WORKERS 0 TEST.DETECTIONS_PER_IMAGE 10
+    --resume 
   "
 
 

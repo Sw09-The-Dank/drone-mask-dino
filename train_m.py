@@ -788,7 +788,7 @@ if __name__ == "__main__":
     parser.add_argument("--val-json", default="/workspace/output_annotations/val_polygons_clean.json")
     parser.add_argument("--images-root", default="/workspace/dataset/images/train")
     parser.add_argument("--val-images-root", default="/workspace/dataset/images/val")
-    parser.add_argument("--fix-json-root", action="store_true")
+    parser.add_argument("--fix-json-root", action="store_true", default=True)
     parser.add_argument("--from-scratch", action="store_true")
     parser.add_argument("--max-iter", type=int, default=None)
     parser.add_argument("--base-lr", type=float, default=None)
@@ -797,6 +797,7 @@ if __name__ == "__main__":
     parser.add_argument('--eval_only', action='store_true')
     parser.add_argument('--EVAL_FLAG', type=int, default=1)
     # Convenience: output directory (mapped to OUTPUT_DIR override)
+    parser.add_argument('--config-file', default='maskdino_drone_config.yaml')
     parser.add_argument('--output', default='/workspace/output')
     parser.add_argument('--eval-num-images', type=int, default=None,
                         help='If set, restrict evaluation to this many images by creating a temporary subset COCO json for DATASETS.TEST')

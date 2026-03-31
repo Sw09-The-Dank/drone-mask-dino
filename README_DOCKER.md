@@ -253,7 +253,17 @@ docker run --gpus all --rm -it ^
   -v "%cd%:/workspace" ^
   -w /workspace ^
   maskdino-demo:latest ^
-  python train.py  --no-resume
+  python train.py
+
+
+When continuing:
+  docker run --gpus all --rm -it ^
+  --shm-size=8g ^
+  -v "%cd%:/workspace" ^
+  -w /workspace ^
+  maskdino-demo:latest ^
+  python train.py --no-resume --weights output_maskdino/trainer_output/model_final.pth
+
 
 
   docker run --gpus all --rm -it ^

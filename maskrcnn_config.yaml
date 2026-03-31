@@ -18,15 +18,22 @@ DATALOADER:
   REPEAT_THRESHOLD: 0.001
 
 SOLVER:
-  IMS_PER_BATCH: 6
-  BASE_LR: 0.00025
-  MAX_ITER: 3000
-  WARMUP_ITERS: 200
-  STEPS: [2100, 2700]
-  CHECKPOINT_PERIOD: 250
+  IMS_PER_BATCH: 4
+  # Lower LR for warm-restart from trained weights (was 0.00025 for cold start).
+  BASE_LR: 0.0001
+  MAX_ITER: 12000
+  # Short warmup — weights already trained, just restabilise optimizer.
+  WARMUP_ITERS: 100
+  # Decay at 60% and 80% of total iterations.
+  STEPS: [7200, 9600]
+  CHECKPOINT_PERIOD: 500
+  CLIP_GRADIENTS:
+    ENABLED: True
+    CLIP_TYPE: "norm"
+    CLIP_VALUE: 1.0
 
 TEST:
-  EVAL_PERIOD: 500
+  EVAL_PERIOD: 1000
 
 MODEL:
   ROI_HEADS:
