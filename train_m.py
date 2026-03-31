@@ -797,7 +797,7 @@ if __name__ == "__main__":
     parser.add_argument('--eval_only', action='store_true')
     parser.add_argument('--EVAL_FLAG', type=int, default=1)
     # Convenience: output directory (mapped to OUTPUT_DIR override)
-    parser.add_argument('--config-file', default='maskdino_drone_config.yaml')
+    parser.set_defaults(config_file='maskdino_drone_config.yaml')
     parser.add_argument('--output', default='/workspace/output')
     parser.add_argument('--eval-num-images', type=int, default=None,
                         help='If set, restrict evaluation to this many images by creating a temporary subset COCO json for DATASETS.TEST')
