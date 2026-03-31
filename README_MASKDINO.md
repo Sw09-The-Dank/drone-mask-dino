@@ -413,32 +413,98 @@ docker run --gpus all --rm -it maskdino-demo:latest python -c "import torch; pri
 
 Test - working:
 
-sudo docker run --gpus all --rm -it \
-  --network=host \
-  --ipc=host \
-  --ulimit memlock=-1 \
-  --ulimit stack=67108864 \
-  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
-  -v "$(pwd):/workspace" -w /workspace \
-  maskdino-demo:latest \
-  /bin/bash -lc "
-    bash ./scripts/m_ddp.sh 2 1 0 169.254.18.231 29500 \
-    --resume 
-  "
+### 2-node DDP launch (from scratch + auto checkpoint sync)
 
+When training **from scratch**, DDP broadcasts initial weights from rank 0 to all ranks automatically — no pre-sync needed. `scripts/sync_checkpoints.sh` runs in the background on rank 0 and automatically copies each saved checkpoint to rank 1 so that `--resume` works later without manual `scp`.
 
+**Node IPs:**
+- spark02 (rank 0): `169.254.18.231` on `enp1s0f1np1`
+- spark01 (rank 1): `169.254.217.232` on `enp1s0f0np0`
+
+**Step 1 — One-time setup on both nodes:**
+```bash
+# On spark01 — fix output dir ownership (Docker writes files as root):
+sudo chown -R spark2gm:spark2gm ~/Documents/drone-mask-dino/output/
+
+# On spark02 — create empty dir to mask the HPCX plugin (prevents a double-free
+# crash when the IB plugin loads but finds no IB hardware):
+mkdir -p /tmp/empty
+
+# On spark01 — same:
+mkdir -p /tmp/empty
+```
+
+**Step 2 — Start rank 1 first** (it blocks waiting for rank 0):
+
+```bash
+# On spark01:
 sudo docker run --gpus all --rm -it \
   --network=host \
   --ipc=host \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
+  -e NCCL_IB_DISABLE=1 \
+  -e NCCL_COLLNET_DISABLE=1 \
+  -e NCCL_P2P_DISABLE=1 \
+  -v /tmp/empty:/opt/hpcx:ro \
   -v "$(pwd):/workspace" -w /workspace \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/m_ddp.sh 2 1 1 169.254.18.231 29500 \
-    --resume 
+    --from-scratch DATALOADER.NUM_WORKERS 0 TEST.EVAL_PERIOD 0
   "
+```
+
+**Step 3 — Start rank 0 + background checkpoint sync** (on spark02):
+
+```bash
+# On spark02 — fix CRLF (script created on Windows), launch sync watcher, then training:
+sed -i 's/\r$//' scripts/sync_checkpoints.sh
+bash ./scripts/sync_checkpoints.sh &
+SYNC_PID=$!
+
+sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
+  -e NCCL_IB_DISABLE=1 \
+  -e NCCL_COLLNET_DISABLE=1 \
+  -e NCCL_P2P_DISABLE=1 \
+  -v /tmp/empty:/opt/hpcx:ro \
+  -v "$(pwd):/workspace" -w /workspace \
+  maskdino-demo:latest \
+  /bin/bash -lc "
+    bash ./scripts/m_ddp.sh 2 1 0 169.254.18.231 29500 \
+    --from-scratch DATALOADER.NUM_WORKERS 0 TEST.EVAL_PERIOD 0
+  "
+
+kill $SYNC_PID
+```
+
+The sync script polls every 30 seconds and copies `model_final.pth`, `last_checkpoint`, and any `model_0*.pth` snapshots to spark01. Override defaults with env vars:
+```bash
+WORKER_IP=169.254.217.232 WORKER_USER=spark2gm POLL_INTERVAL=60 bash ./scripts/sync_checkpoints.sh &
+```
+
+### Resuming an interrupted run
+
+If training was interrupted and you need to resume, first manually sync (since the watcher won't have been running):
+```bash
+# On spark02 — verify output dir ownership on spark01 first, then:
+scp ~/Documents/drone-mask-dino/output/model_final.pth \
+    ~/Documents/drone-mask-dino/output/last_checkpoint \
+    spark2gm@169.254.217.232:~/Documents/drone-mask-dino/output/
+
+# Verify hashes match:
+sha256sum ~/Documents/drone-mask-dino/output/model_final.pth
+# Then on spark01:
+sha256sum ~/Documents/drone-mask-dino/output/model_final.pth
+```
+
+Then relaunch using `--resume` instead of `--from-scratch` in both commands above, with the background sync watcher running again on rank 0.
 
 
 
