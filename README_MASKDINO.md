@@ -384,7 +384,7 @@ sudo docker run --gpus all --rm -it \
   -e NCCL_NET_GDR_LEVEL=0 -e NCCL_SOCKET_RETRY_CNT=10 -e NCCL_SOCKET_RETRY_SLEEP_MSEC=2000 \
   -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
   -e LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu \
-  -v /tmp/empty:/opt/hpcx:ro \
+  -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
   -v "$(pwd):/workspace" -w /workspace \
   maskdino-demo:latest \
   /bin/bash -lc "mkdir -p /workspace/ddp_debug_logs && \
@@ -397,7 +397,7 @@ sudo docker run --gpus all --rm -it \
   -e NCCL_NET_GDR_LEVEL=0 -e NCCL_SOCKET_RETRY_CNT=10 -e NCCL_SOCKET_RETRY_SLEEP_MSEC=2000 \
   -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
   -e LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu \
-  -v /tmp/empty:/opt/hpcx:ro \
+  -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
   -v "$(pwd):/workspace" -w /workspace \
   maskdino-demo:latest \
   /bin/bash -lc "mkdir -p /workspace/ddp_debug_logs && \
@@ -426,8 +426,15 @@ When training **from scratch**, DDP broadcasts initial weights from rank 0 to al
 # On spark01 — fix output dir ownership (Docker writes files as root):
 sudo chown -R spark2gm:spark2gm ~/Documents/drone-mask-dino/output/
 
-# On spark02 — create empty dir to mask the HPCX plugin (prevents a double-free
-# crash when the IB plugin loads but finds no IB hardware):
+# On spark02 — enable passwordless SSH to spark01 (required for background sync).
+# Use a dedicated key so you do NOT overwrite ~/.ssh/id_ed25519 used by git:
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519_ddp
+ssh-copy-id -i ~/.ssh/id_ed25519_ddp.pub spark2gm@169.254.217.232
+ssh -i ~/.ssh/id_ed25519_ddp -o BatchMode=yes spark2gm@169.254.217.232 'echo ssh-ok'
+
+# On spark02 — create empty dir to mask only the NCCL RDMA plugin (prevents a
+# double-free crash when the IB plugin loads but finds no IB hardware).
+# Do NOT mask all of /opt/hpcx — PyTorch needs libucc.so.1 from there.
 mkdir -p /tmp/empty
 
 # On spark01 — same:
@@ -447,7 +454,7 @@ sudo docker run --gpus all --rm -it \
   -e NCCL_IB_DISABLE=1 \
   -e NCCL_COLLNET_DISABLE=1 \
   -e NCCL_P2P_DISABLE=1 \
-  -v /tmp/empty:/opt/hpcx:ro \
+  -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
   -v "$(pwd):/workspace" -w /workspace \
   maskdino-demo:latest \
   /bin/bash -lc "
@@ -461,7 +468,7 @@ sudo docker run --gpus all --rm -it \
 ```bash
 # On spark02 — fix CRLF (script created on Windows), launch sync watcher, then training:
 sed -i 's/\r$//' scripts/sync_checkpoints.sh
-bash ./scripts/sync_checkpoints.sh &
+SSH_KEY=~/.ssh/id_ed25519_ddp bash ./scripts/sync_checkpoints.sh > /tmp/sync_checkpoints.log 2>&1 &
 SYNC_PID=$!
 
 sudo docker run --gpus all --rm -it \
@@ -473,7 +480,7 @@ sudo docker run --gpus all --rm -it \
   -e NCCL_IB_DISABLE=1 \
   -e NCCL_COLLNET_DISABLE=1 \
   -e NCCL_P2P_DISABLE=1 \
-  -v /tmp/empty:/opt/hpcx:ro \
+  -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
   -v "$(pwd):/workspace" -w /workspace \
   maskdino-demo:latest \
   /bin/bash -lc "
@@ -482,11 +489,14 @@ sudo docker run --gpus all --rm -it \
   "
 
 kill $SYNC_PID
+
+# Verify watcher actually synced files:
+tail -n 50 /tmp/sync_checkpoints.log
 ```
 
 The sync script polls every 30 seconds and copies `model_final.pth`, `last_checkpoint`, and any `model_0*.pth` snapshots to spark01. Override defaults with env vars:
 ```bash
-WORKER_IP=169.254.217.232 WORKER_USER=spark2gm POLL_INTERVAL=60 bash ./scripts/sync_checkpoints.sh &
+WORKER_IP=169.254.217.232 WORKER_USER=spark2gm POLL_INTERVAL=60 SSH_KEY=~/.ssh/id_ed25519_ddp bash ./scripts/sync_checkpoints.sh &
 ```
 
 ### Resuming an interrupted run
