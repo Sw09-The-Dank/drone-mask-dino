@@ -914,6 +914,31 @@ if __name__ == "__main__":
         if getattr(args, "output", None):
             dataset_overrides.extend(["OUTPUT_DIR", getattr(args, "output")])
 
+        # Point MODEL.WEIGHTS to the latest checkpoint in the output dir so
+        # resuming looks in the right place instead of the config default.
+        if getattr(args, "output", None) and not getattr(args, "from_scratch", False):
+            _out = getattr(args, "output")
+            _last_ck = os.path.join(_out, "last_checkpoint")
+            _resolved = None
+            if os.path.isfile(_last_ck):
+                try:
+                    with open(_last_ck, "r") as _lf:
+                        _ck_name = _lf.read().strip()
+                    if _ck_name:
+                        _candidate = _ck_name if os.path.isabs(_ck_name) else os.path.join(_out, _ck_name)
+                        if os.path.isfile(_candidate):
+                            _resolved = _candidate
+                except Exception:
+                    pass
+            if _resolved is None:
+                _mf = os.path.join(_out, "model_final.pth")
+                if os.path.isfile(_mf):
+                    _resolved = _mf
+            if _resolved:
+                dataset_overrides.extend(["MODEL.WEIGHTS", _resolved])
+                args.resume = True
+                print(f"[checkpoint] Found existing checkpoint in output dir: {_resolved}")
+
         # Ensure enough detections per image for evaluation (default 10 is too low)
         dataset_overrides.extend(["TEST.DETECTIONS_PER_IMAGE", "100"])
 
