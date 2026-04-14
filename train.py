@@ -1091,7 +1091,8 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                 print("[WARN] Could not determine number of training images; skipping epochs->MAX_ITER conversion")
     except Exception as e:
         print(f"[WARN] Failed to compute MAX_ITER from epochs: {e}")
-    cfg.OUTPUT_DIR = "output_maskdino/trainer_output"
+    if not output_dir:
+        cfg.OUTPUT_DIR = "output_maskdino/trainer_output"
     os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
 
     # Monkey-patch annotations_to_instances to dump offending annotations on ValueError
@@ -1208,7 +1209,17 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     except Exception:
         resume_ckpt = None
 
-    trainer = DefaultTrainer(cfg)
+    # Subclass DefaultTrainer to add COCO evaluation during training
+    class DroneTrainer(DefaultTrainer):
+        @classmethod
+        def build_evaluator(cls, cfg, dataset_name, output_folder=None):
+            from detectron2.evaluation import COCOEvaluator
+            if output_folder is None:
+                output_folder = os.path.join(cfg.OUTPUT_DIR, "inference")
+            os.makedirs(output_folder, exist_ok=True)
+            return COCOEvaluator(dataset_name, tasks=None, distributed=False, output_dir=output_folder)
+
+    trainer = DroneTrainer(cfg)
     # resume=True will continue from last checkpoint if present
     try:
         if bool(resume):
@@ -1238,7 +1249,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                     print(f"[WARN] Falling back to weights-only load from MODEL.WEIGHTS={cfg.MODEL.WEIGHTS}")
             print("[WARN] To avoid this warning, clear OUTPUT_DIR/last_checkpoint or run with --no-resume.")
             # Recreate trainer/checkpointer to avoid internal partial-load state assertions.
-            trainer = DefaultTrainer(cfg)
+            trainer = DroneTrainer(cfg)
             trainer.resume_or_load(resume=False)
         else:
             raise

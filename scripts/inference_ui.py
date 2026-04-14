@@ -241,6 +241,52 @@ def get_cached_predictor(model_type: str, config_file: Optional[str], weights: O
     return _predictor_cache["predictor"], _predictor_cache["cfg"]
 
 
+def _ensure_uint8_image(arr):
+    """Convert arbitrary image array to uint8 HxWxC (0..255) for predictor input."""
+    import numpy as _np
+
+    a = _np.asarray(arr)
+    if a.dtype == _np.uint8:
+        return a
+
+    # Common Gradio/PIL paths can produce float arrays in 0..1 or 0..255.
+    if _np.issubdtype(a.dtype, _np.floating):
+        maxv = float(_np.nanmax(a)) if a.size else 0.0
+        if maxv <= 1.0:
+            a = a * 255.0
+    a = _np.nan_to_num(a, nan=0.0, posinf=255.0, neginf=0.0)
+    a = _np.clip(a, 0, 255).astype(_np.uint8, copy=False)
+    return a
+
+
+def _rescale_normalized_instances_inplace(instances, image_shape):
+    """If model returned 0..1-ish boxes, convert them to pixel coordinates in-place."""
+    if instances is None or len(instances) == 0 or (not instances.has("pred_boxes")):
+        return False
+
+    try:
+        import torch
+        h, w = int(image_shape[0]), int(image_shape[1])
+        boxes = instances.pred_boxes.tensor
+        if boxes.numel() == 0 or h <= 0 or w <= 0:
+            return False
+
+        max_abs = float(boxes.abs().max().item())
+        min_val = float(boxes.min().item())
+
+        # Heuristic: normalized boxes stay close to 0..1 (occasionally slight negatives).
+        if max_abs <= 2.5 and min_val >= -0.5:
+            scale = torch.tensor([w, h, w, h], dtype=boxes.dtype, device=boxes.device)
+            boxes.mul_(scale)
+            boxes[:, 0::2].clamp_(0, max(0, w - 1))
+            boxes[:, 1::2].clamp_(0, max(0, h - 1))
+            return True
+    except Exception:
+        return False
+
+    return False
+
+
 def prepare_output(prediction, image, cfg, include_json: bool = True):
     out_json = {
         "instances": [],
@@ -626,20 +672,18 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
     vis_list = []
     json_list = []
     
-    # Track image size for MaskDINO coordinate rescaling fix
-    original_img_size = None
     for i, img in enumerate(proc_imgs):
         try:
             # Prepare predictor input based on config input format.
             # Gradio/PIL-loaded images here are RGB.
-            pred_img = img
+            pred_img = _ensure_uint8_image(img)
             try:
                 import numpy as _np
                 if isinstance(img, _np.ndarray) and img.ndim == 3 and img.shape[2] >= 3:
                     if input_format == "RGB":
-                        pred_img = img
+                        pred_img = _ensure_uint8_image(img)
                     else:
-                        pred_img = img[:, :, ::-1]
+                        pred_img = _ensure_uint8_image(img)[:, :, ::-1]
             except Exception:
                 pred_img = img
 
@@ -649,7 +693,7 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
                     import numpy as _np
                     if isinstance(pred_img, _np.ndarray):
                         print(f"[DIAG] Input image shape: {pred_img.shape} (H x W x C or similar)")
-                        original_img_size = pred_img.shape[:2]  # Store (H, W)
+                        pass
                 except Exception:
                     pass
 
@@ -659,6 +703,8 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
             try:
                 if "instances" in outputs and outputs["instances"] is not None:
                     outputs["instances"] = outputs["instances"].to("cpu")
+                    if _rescale_normalized_instances_inplace(outputs["instances"], pred_img.shape):
+                        print(f"[WARN] image {i}: detected normalized boxes; rescaled to pixel coordinates")
             except Exception:
                 pass
             

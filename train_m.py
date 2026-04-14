@@ -791,6 +791,8 @@ if __name__ == "__main__":
     parser.add_argument("--fix-json-root", action="store_true", default=True)
     parser.add_argument("--from-scratch", action="store_true")
     parser.add_argument("--max-iter", type=int, default=None)
+    parser.add_argument("--epochs", type=int, default=None,
+                        help='Number of training epochs. Converted to max_iter using the training dataset size and batch size. Overrides --max-iter if both are given.')
     parser.add_argument("--base-lr", type=float, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--ims-per-batch", type=int, default=None)
@@ -903,6 +905,31 @@ if __name__ == "__main__":
                     dataset_overrides.extend(["MODEL.SEM_SEG_HEAD.NUM_CLASSES", str(num_classes)])
             except Exception:
                 dataset_overrides.extend(["MODEL.WEIGHTS", ""])
+
+        # Convert --epochs to --max-iter if provided
+        if getattr(args, "epochs", None) is not None:
+            try:
+                import json as _json_epochs
+                import math
+                _train_j = getattr(args, "train_json", None) or train_json
+                if _train_j and os.path.isfile(_train_j):
+                    with open(_train_j, "r") as _ef:
+                        _ej = _json_epochs.load(_ef)
+                    num_train_images = len(_ej.get("images", []))
+                else:
+                    num_train_images = 0
+                _batch = getattr(args, "ims_per_batch", None) or 1
+                if num_train_images > 0:
+                    iters_per_epoch = math.ceil(num_train_images / _batch)
+                    computed_max_iter = args.epochs * iters_per_epoch
+                    print(f"[epochs] {args.epochs} epochs x {iters_per_epoch} iters/epoch "
+                          f"({num_train_images} images / {_batch} batch) = {computed_max_iter} max_iter")
+                    args.max_iter = computed_max_iter
+                else:
+                    print(f"[epochs] WARNING: could not determine dataset size from {_train_j}, "
+                          f"falling back to --max-iter if set")
+            except Exception as _ep_err:
+                print(f"[epochs] WARNING: failed to convert epochs to max_iter: {_ep_err}")
 
         # hyperparameter overrides
         if getattr(args, "max_iter", None) is not None:
