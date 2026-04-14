@@ -814,6 +814,20 @@ if __name__ == "__main__":
         val_json = getattr(args, "val_json", None)
         train_reg_root = getattr(args, "images_root", "") or ""
         val_reg_root = getattr(args, "val_images_root", "") or getattr(args, "images_root", "") or ""
+        def _fill_missing_area(coco_dict):
+            """Compute 'area' from bbox (w*h) for annotations missing it."""
+            fixed = 0
+            for ann in coco_dict.get("annotations", []):
+                if "area" not in ann or ann["area"] is None:
+                    bbox = ann.get("bbox", [])
+                    if len(bbox) == 4:
+                        ann["area"] = float(bbox[2]) * float(bbox[3])
+                    else:
+                        ann["area"] = 0.0
+                    fixed += 1
+            if fixed:
+                print(f"[fix-json] Filled missing 'area' for {fixed} annotations")
+
         if getattr(args, "fix_json_root", False):
             import json, os, tempfile
             if train_json and getattr(args, "images_root", None):
@@ -822,6 +836,7 @@ if __name__ == "__main__":
                         _j = json.load(_f)
                     for img in _j.get("images", []):
                         img["file_name"] = os.path.join(getattr(args, "images_root"), os.path.basename(img.get("file_name", "")))
+                    _fill_missing_area(_j)
                     tf = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
                     with open(tf.name, "w") as _wf:
                         json.dump(_j, _wf)
@@ -837,6 +852,7 @@ if __name__ == "__main__":
                             _jv = json.load(_f)
                         for img in _jv.get("images", []):
                             img["file_name"] = os.path.join(val_root, os.path.basename(img.get("file_name", "")))
+                        _fill_missing_area(_jv)
                         tfv = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
                         with open(tfv.name, "w") as _wv:
                             json.dump(_jv, _wv)
