@@ -815,18 +815,29 @@ if __name__ == "__main__":
         train_reg_root = getattr(args, "images_root", "") or ""
         val_reg_root = getattr(args, "val_images_root", "") or getattr(args, "images_root", "") or ""
         def _fill_missing_area(coco_dict):
-            """Compute 'area' from bbox (w*h) for annotations missing it."""
+            """Compute 'area' from bbox (w*h) for annotations missing it.
+            Also removes degenerate annotations with zero-width or zero-height
+            bboxes, which cause NaN/Inf in GIoU loss and corrupt training."""
             fixed = 0
-            for ann in coco_dict.get("annotations", []):
+            degenerate = []
+            for idx, ann in enumerate(coco_dict.get("annotations", [])):
+                bbox = ann.get("bbox", [])
+                if len(bbox) == 4 and (float(bbox[2]) <= 0 or float(bbox[3]) <= 0):
+                    degenerate.append(idx)
+                    continue
                 if "area" not in ann or ann["area"] is None:
-                    bbox = ann.get("bbox", [])
                     if len(bbox) == 4:
                         ann["area"] = float(bbox[2]) * float(bbox[3])
                     else:
                         ann["area"] = 0.0
                     fixed += 1
+            # Remove degenerate annotations in reverse order to preserve indices
+            for idx in reversed(degenerate):
+                coco_dict["annotations"].pop(idx)
             if fixed:
                 print(f"[fix-json] Filled missing 'area' for {fixed} annotations")
+            if degenerate:
+                print(f"[fix-json] Removed {len(degenerate)} degenerate annotations (zero width/height bbox)")
 
         if getattr(args, "fix_json_root", False):
             import json, os, tempfile
@@ -902,6 +913,9 @@ if __name__ == "__main__":
         # output override
         if getattr(args, "output", None):
             dataset_overrides.extend(["OUTPUT_DIR", getattr(args, "output")])
+
+        # Ensure enough detections per image for evaluation (default 10 is too low)
+        dataset_overrides.extend(["TEST.DETECTIONS_PER_IMAGE", "100"])
 
         # from-scratch: infer num classes and clear MODEL.WEIGHTS
         if getattr(args, "from_scratch", False) and train_json and os.path.isfile(train_json):
