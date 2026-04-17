@@ -1,6 +1,6 @@
 # Inherit Detectron2 model-zoo config exactly like train.py starts from:
-# model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml")
-_BASE_: detectron2/configs/COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml
+# model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
+_BASE_: detectron2/configs/COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml
 
 # Project defaults that mirror train.py effective settings.
 DATASETS:
@@ -13,32 +13,27 @@ DATASETS:
 DATALOADER:
   # Keep workers moderate for Docker stability.
   NUM_WORKERS: 8
-  # Helps minority classes appear more often in training.
-  SAMPLER_TRAIN: RepeatFactorTrainingSampler
-  REPEAT_THRESHOLD: 0.001
+  SAMPLER_TRAIN: TrainingSampler
 
 SOLVER:
-  IMS_PER_BATCH: 4
-  # Slightly higher LR and slower decay to avoid an over-frozen late phase.
-  BASE_LR: 0.00015
-  MAX_ITER: 16000
-  # Longer warmup improves stability after resume/fine-tune transitions.
-  WARMUP_ITERS: 300
-  # Later and gentler decays for better late-stage learning.
-  STEPS: [11000, 14000]
-  GAMMA: 0.5
-  CHECKPOINT_PERIOD: 500
+  IMS_PER_BATCH: 8
+  BASE_LR: 0.0003
+  MAX_ITER: 360000
+  WARMUP_ITERS: 1000
+  STEPS: [240000, 320000]
+  GAMMA: 0.1
+  CHECKPOINT_PERIOD: 5000
   CLIP_GRADIENTS:
     ENABLED: True
     CLIP_TYPE: "norm"
     CLIP_VALUE: 1.0
 
 TEST:
-  EVAL_PERIOD: 10000
+  EVAL_PERIOD: 20000
 
 INPUT:
   # Higher train/test scales generally improve small-object instance recall.
-  MIN_SIZE_TRAIN: [800, 960, 1024]
+  MIN_SIZE_TRAIN: [640, 800, 960, 1024]
   MAX_SIZE_TRAIN: 1600
   MIN_SIZE_TEST: 1024
   MAX_SIZE_TEST: 1600
