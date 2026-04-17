@@ -19,13 +19,14 @@ DATALOADER:
 
 SOLVER:
   IMS_PER_BATCH: 4
-  # Lower LR for warm-restart from trained weights (was 0.00025 for cold start).
-  BASE_LR: 0.0001
-  MAX_ITER: 12000
-  # Short warmup — weights already trained, just restabilise optimizer.
-  WARMUP_ITERS: 100
-  # Decay at 60% and 80% of total iterations.
-  STEPS: [7200, 9600]
+  # Slightly higher LR and slower decay to avoid an over-frozen late phase.
+  BASE_LR: 0.00015
+  MAX_ITER: 16000
+  # Longer warmup improves stability after resume/fine-tune transitions.
+  WARMUP_ITERS: 300
+  # Later and gentler decays for better late-stage learning.
+  STEPS: [11000, 14000]
+  GAMMA: 0.5
   CHECKPOINT_PERIOD: 500
   CLIP_GRADIENTS:
     ENABLED: True
@@ -33,13 +34,33 @@ SOLVER:
     CLIP_VALUE: 1.0
 
 TEST:
-  EVAL_PERIOD: 1000
+  EVAL_PERIOD: 10000
+
+INPUT:
+  # Higher train/test scales generally improve small-object instance recall.
+  MIN_SIZE_TRAIN: [800, 960, 1024]
+  MAX_SIZE_TRAIN: 1600
+  MIN_SIZE_TEST: 1024
+  MAX_SIZE_TEST: 1600
 
 MODEL:
+  ANCHOR_GENERATOR:
+    # Add smaller anchors to better match small drone instances.
+    SIZES: [[8], [16], [32], [64], [128]]
+    ASPECT_RATIOS: [[0.5, 1.0, 2.0]]
+
+  RPN:
+    # Increase proposal budget to improve recall on hard/small objects.
+    PRE_NMS_TOPK_TRAIN: 4000
+    POST_NMS_TOPK_TRAIN: 2000
+    PRE_NMS_TOPK_TEST: 2000
+    POST_NMS_TOPK_TEST: 1000
+
   ROI_HEADS:
     BATCH_SIZE_PER_IMAGE: 256
     # train.py may infer this from JSON categories at runtime.
     NUM_CLASSES: 8
+    SCORE_THRESH_TEST: 0.3
 
 # train.py explicitly sets OUTPUT_DIR near the end of setup.
 OUTPUT_DIR: output_maskdino/trainer_output

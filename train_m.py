@@ -934,10 +934,24 @@ if __name__ == "__main__":
                 _mf = os.path.join(_out, "model_final.pth")
                 if os.path.isfile(_mf):
                     _resolved = _mf
+            # Fallback: pick the latest model_*.pth in the output dir
+            if _resolved is None:
+                import glob as _glob
+                _candidates = _glob.glob(os.path.join(_out, "model_*.pth"))
+                if _candidates:
+                    _candidates.sort(key=lambda f: os.path.getmtime(f))
+                    _resolved = _candidates[-1]
             if _resolved:
                 dataset_overrides.extend(["MODEL.WEIGHTS", _resolved])
                 args.resume = True
                 print(f"[checkpoint] Found existing checkpoint in output dir: {_resolved}")
+            else:
+                # No checkpoint in the specified output dir — use the official
+                # COCO-pretrained MaskDINO R50 (hid2048, 300 queries, 4 feature
+                # levels) so the full model starts with pretrained features.
+                _zoo_weights = "https://github.com/IDEA-Research/detrex-storage/releases/download/maskdino-v0.1.0/maskdino_r50_50ep_300q_hid2048_3sd1_instance_maskenhanced_mask46.3ap_box51.7ap.pth"
+                dataset_overrides.extend(["MODEL.WEIGHTS", _zoo_weights])
+                print(f"[checkpoint] No checkpoint found in {_out}; using COCO-pretrained MaskDINO: {_zoo_weights}")
 
         # Ensure enough detections per image for evaluation (default 10 is too low)
         dataset_overrides.extend(["TEST.DETECTIONS_PER_IMAGE", "100"])
