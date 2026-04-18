@@ -173,6 +173,7 @@ output_maskdino/
 MaskDino
 detectron2
 
+dataset/
 dataset/bb_labels/*
 dataset/segment_labels/*
 # dataset/images/*

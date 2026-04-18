@@ -1081,6 +1081,14 @@ if __name__ == "__main__":
                 torch.cuda.set_device(local_rank)
             except Exception:
                 pass
+            # Cap GPU memory so the process OOM-crashes instead of stalling the
+            # system when unified memory is exhausted (DGX Spark / Grace-Blackwell).
+            try:
+                frac = float(os.environ.get("CUDA_MEMORY_FRACTION", "0.85"))
+                torch.cuda.set_per_process_memory_fraction(frac, local_rank)
+                print(f"[MEM] GPU memory fraction capped at {frac:.0%} for device {local_rank}")
+            except Exception as e:
+                print(f"[MEM] Could not set GPU memory fraction: {e}")
         if not dist.is_initialized():
             backend = "nccl" if torch.cuda.is_available() else "gloo"
             try:
@@ -1128,6 +1136,14 @@ if __name__ == "__main__":
     else:
         port = random.randint(1000, 20000)
         args.dist_url = 'tcp://127.0.0.1:' + str(port)
+        # Cap GPU memory for non-torchrun path too
+        if torch.cuda.is_available():
+            try:
+                frac = float(os.environ.get("CUDA_MEMORY_FRACTION", "0.85"))
+                torch.cuda.set_per_process_memory_fraction(frac, 0)
+                print(f"[MEM] GPU memory fraction capped at {frac:.0%} for device 0")
+            except Exception as e:
+                print(f"[MEM] Could not set GPU memory fraction: {e}")
         print("Command Line Args:", args)
         print("pwd:", os.getcwd())
         launch(

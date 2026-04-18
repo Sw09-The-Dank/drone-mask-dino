@@ -321,6 +321,7 @@ print("\n--- TRAINER DEFINITION ---")
 def run_default_trainer(train_json_path="output_annotations/train_polygons.json",
                         val_json_path="output_annotations/val_polygons.json",
                         images_root="dataset/images",
+                        val_images_root=None,
                         output_dir=None,
                         max_iter=None,
                         ims_per_batch=None,
@@ -400,13 +401,16 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
 
     # If images are organized under images_root/train and images_root/val, prefer those
     train_img_root = images_root
-    val_img_root = images_root
+    val_img_root = val_images_root if val_images_root else images_root
     train_candidate = os.path.join(images_root, "train")
-    val_candidate = os.path.join(images_root, "val")
     if os.path.isdir(train_candidate):
         train_img_root = train_candidate
-    if os.path.isdir(val_candidate):
-        val_img_root = val_candidate
+    if not val_images_root:
+        for subdir in ("val", "test"):
+            candidate = os.path.join(images_root, subdir)
+            if os.path.isdir(candidate):
+                val_img_root = candidate
+                break
 
     # Fallbacks: some setups place images under top-level `images/` instead of `dataset/images/`.
     # If the chosen img roots do not exist or contain few files, try common alternate locations.
@@ -423,7 +427,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
         return preferred
 
     train_img_root = _choose_existing_root(train_img_root, [os.path.join('images','train'), 'images', os.path.join('dataset','images','train')])
-    val_img_root = _choose_existing_root(val_img_root, [os.path.join('images','val'), 'images', os.path.join('dataset','images','val')])
+    val_img_root = _choose_existing_root(val_img_root, [os.path.join('images','val'), os.path.join('images','test'), 'images', os.path.join('dataset','images','val'), os.path.join('dataset','images','test')])
 
     # Require both train and val JSONs to exist at this point; abort early if missing.
     train_exists = os.path.isfile(train_json_path)
@@ -880,12 +884,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     cfg.DATASETS.TRAIN = (train_dataset_name,) if isinstance(train_dataset_name, str) else (train_name,)
     cfg.DATASETS.TEST = (val_dataset_name,) if isinstance(val_dataset_name, str) else (val_name,)
     cfg.DATALOADER.NUM_WORKERS = _choose_default_num_workers()
-    cfg.SOLVER.IMS_PER_BATCH = 4
-    cfg.SOLVER.BASE_LR = 0.00025
     # cfg.SOLVER.STEPS = (3000,4000)
-    cfg.SOLVER.MAX_ITER = 3000
-    cfg.SOLVER.CHECKPOINT_PERIOD = 100
-    cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 256
     print(f"[INFO] Default DATALOADER.NUM_WORKERS = {cfg.DATALOADER.NUM_WORKERS}")
 
      # Apply optional config/weight overrides provided by caller (CLI or function args)
@@ -1857,6 +1856,7 @@ if __name__ == "__main__":
     parser.add_argument('--train-json', default="output_annotations/train_polygons.json", help='path to train COCO JSON')
     parser.add_argument('--val-json', default="output_annotations/val_polygons.json", help='path to val COCO JSON')
     parser.add_argument('--images-root', default="dataset/images", help='root folder for images')
+    parser.add_argument('--val-images-root', default=None, help='root folder for val/test images (defaults to images-root)')
     parser.add_argument('--output-dir', default=None, help='output directory to write trainer outputs')
     parser.add_argument('--max-iter', type=int, default=None, help='override SOLVER.MAX_ITER')
     parser.add_argument('--ims-per-batch', type=int, default=None, help='override SOLVER.IMS_PER_BATCH')
@@ -1889,6 +1889,7 @@ if __name__ == "__main__":
         train_json_path=args.train_json,
         val_json_path=args.val_json,
         images_root=args.images_root,
+        val_images_root=args.val_images_root,
         output_dir=args.output_dir,
         max_iter=args.max_iter,
         ims_per_batch=args.ims_per_batch,
