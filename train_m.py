@@ -782,12 +782,17 @@ def main(args):
 
 
 if __name__ == "__main__":
+    DEFAULT_TRAIN_JSON = "/workspace/output_annotations/train_polygons_clean.json"
+    DEFAULT_VAL_JSON = "/workspace/output_annotations/val_polygons_clean.json"
+    DEFAULT_IMAGES_ROOT = "/workspace/dataset/images/train"
+    DEFAULT_VAL_IMAGES_ROOT = "/workspace/dataset/images/val"
+
     parser = default_argument_parser()
     # Extra convenience args (also accepted by scripts/launch_maskdino.py)
-    parser.add_argument("--train-json", default="/workspace/output_annotations/train_polygons_clean.json")
-    parser.add_argument("--val-json", default="/workspace/output_annotations/val_polygons_clean.json")
-    parser.add_argument("--images-root", default="/workspace/dataset/images/train")
-    parser.add_argument("--val-images-root", default="/workspace/dataset/images/val")
+    parser.add_argument("--train-json", default=DEFAULT_TRAIN_JSON)
+    parser.add_argument("--val-json", default=DEFAULT_VAL_JSON)
+    parser.add_argument("--images-root", default=DEFAULT_IMAGES_ROOT)
+    parser.add_argument("--val-images-root", default=DEFAULT_VAL_IMAGES_ROOT)
     parser.add_argument("--fix-json-root", action="store_true", default=True)
     parser.add_argument("--from-scratch", action="store_true")
     parser.add_argument("--max-iter", type=int, default=None)
@@ -804,6 +809,53 @@ if __name__ == "__main__":
     parser.add_argument('--eval-num-images', type=int, default=None,
                         help='If set, restrict evaluation to this many images by creating a temporary subset COCO json for DATASETS.TEST')
     args = parser.parse_args()
+
+    def _dir_has_any_file(path):
+        if not path or not os.path.isdir(path):
+            return False
+        for _root, _dirs, files in os.walk(path):
+            if files:
+                return True
+        return False
+
+    startup_errors = []
+
+    # Validate JSON paths (provided or defaults)
+    if not args.train_json or not os.path.isfile(args.train_json):
+        src = "default" if args.train_json == DEFAULT_TRAIN_JSON else "provided"
+        startup_errors.append(
+            f"--train-json ({src}) does not exist or is not a file: {args.train_json}"
+        )
+    elif os.path.getsize(args.train_json) == 0:
+        startup_errors.append(f"--train-json is empty: {args.train_json}")
+
+    if not args.val_json or not os.path.isfile(args.val_json):
+        src = "default" if args.val_json == DEFAULT_VAL_JSON else "provided"
+        startup_errors.append(
+            f"--val-json ({src}) does not exist or is not a file: {args.val_json}"
+        )
+    elif os.path.getsize(args.val_json) == 0:
+        startup_errors.append(f"--val-json is empty: {args.val_json}")
+
+    # Validate image roots (provided or defaults) contain files
+    if not _dir_has_any_file(args.images_root):
+        src = "default" if args.images_root == DEFAULT_IMAGES_ROOT else "provided"
+        startup_errors.append(
+            f"--images-root ({src}) is missing or contains no files: {args.images_root}"
+        )
+
+    if not _dir_has_any_file(args.val_images_root):
+        src = "default" if args.val_images_root == DEFAULT_VAL_IMAGES_ROOT else "provided"
+        startup_errors.append(
+            f"--val-images-root ({src}) is missing or contains no files: {args.val_images_root}"
+        )
+
+    if startup_errors:
+        print("[startup-check] Dataset path validation failed:")
+        for err in startup_errors:
+            print(f"[startup-check] - {err}")
+        raise SystemExit(2)
+
     # If user provided train/val JSONs via these convenience flags, register them
     # under repository-local names and translate into cfg overrides appended
     # to args.opts so the rest of the pipeline receives them.
