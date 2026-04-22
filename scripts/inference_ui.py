@@ -12,6 +12,8 @@ runs inference, and returns a visualized image plus an optional JSON summary.
 """
 import os
 import json
+import re
+import tempfile
 import torch
 from typing import Optional
 
@@ -37,8 +39,11 @@ except Exception:
 
 # Fallback class list from `train.py` to populate MetadataCatalog when absent
 DEFAULT_CLASS_NAMES = [
-    "rotor", "frame", "camera", "landinggear",
-    "air2s", "neo", "mavic3m", "mini3pro",
+    "horstab", "verstab", "boom", "wing",
+    "fuselage", "rotor-stump", "drone-body", "arm",
+    "landing gear", "guard", "DNDN-concept", "Fixed-wing-concept",
+    "Shahed", "DJI-Matrice-600-Pro", "DJI-S900", "DJI-Spark",
+    "U842-Sport-Racing",
 ]
 
 try:
@@ -58,6 +63,246 @@ _predictor_cache = {
 # Keep JSON payloads bounded so Gradio textbox rendering does not stall UI.
 MAX_JSON_INSTANCES_PER_IMAGE = 100
 MAX_TEXTBOX_JSON_CHARS = 250000
+DEFAULT_CATEGORIES_JSON = """1 : horstab,
+2 : verstab,
+3 : boom,
+4 : wing,
+5 : fuselage,
+6 : rotor-stump,
+7 : drone-body,
+8 : arm,
+9 : landing gear,
+10 : guard,
+11 : DNDN-concept,
+12 : Fixed-wing-concept,
+13 : Shahed,
+14 : DJI-Matrice-600-Pro,
+15 : DJI-S900,
+16 : DJI-Spark,
+17 : U842-Sport-Racing,
+"""
+
+
+def _load_checkpoint_state_dict(weights_path: Optional[str]):
+    """Return the model state_dict stored in a Detectron2-style checkpoint."""
+    if not weights_path or not os.path.isfile(weights_path):
+        return None
+
+    ckpt = torch.load(weights_path, map_location="cpu")
+    state_dict = ckpt.get("model", ckpt) if isinstance(ckpt, dict) else ckpt
+    return state_dict if isinstance(state_dict, dict) else None
+
+
+def _get_cfg_num_classes(cfg, model_type: str) -> int:
+    """Read the active class count from cfg for the requested model type."""
+    try:
+        if model_type == "maskdino" and hasattr(cfg.MODEL, "SEM_SEG_HEAD") and hasattr(cfg.MODEL.SEM_SEG_HEAD, "NUM_CLASSES"):
+            return int(cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES)
+    except Exception:
+        pass
+
+    try:
+        return int(getattr(cfg.MODEL.ROI_HEADS, "NUM_CLASSES", 0))
+    except Exception:
+        return 0
+
+
+def _set_cfg_num_classes(cfg, num_classes: int):
+    """Force cfg NUM_CLASSES fields so model construction matches the checkpoint."""
+    if num_classes is None or int(num_classes) <= 0:
+        return False
+
+    num_classes = int(num_classes)
+    try:
+        from detectron2.config import CfgNode as CN
+    except Exception:
+        CN = None
+
+    try:
+        cfg.MODEL.ROI_HEADS.NUM_CLASSES = num_classes
+    except Exception:
+        if CN is not None and not hasattr(cfg.MODEL, "ROI_HEADS"):
+            cfg.MODEL.ROI_HEADS = CN()
+        cfg.MODEL.ROI_HEADS.NUM_CLASSES = num_classes
+
+    try:
+        cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = num_classes
+    except Exception:
+        if CN is not None and not hasattr(cfg.MODEL, "SEM_SEG_HEAD"):
+            cfg.MODEL.SEM_SEG_HEAD = CN()
+        cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = num_classes
+
+    return True
+
+
+def _looks_generic_class_names(names) -> bool:
+    if not isinstance(names, (list, tuple)) or not names:
+        return True
+    try:
+        return all(str(name).startswith("class_") for name in names)
+    except Exception:
+        return False
+
+
+def _parse_class_names_json(categories_json_text: Optional[str]):
+    if not categories_json_text or not str(categories_json_text).strip():
+        return None
+
+    try:
+        parsed_pairs = []
+        text = str(categories_json_text).strip()
+        simple_match_count = 0
+        for line_number, raw_line in enumerate(text.splitlines(), start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            match = re.match(r"^(\d+)\s*:\s*(.+?)\s*,?$", line)
+            if not match:
+                parsed_pairs = []
+                break
+            class_id = int(match.group(1))
+            class_name = match.group(2).strip()
+            if not class_name:
+                raise ValueError(f"Invalid categories format on line {line_number}: missing class name")
+            parsed_pairs.append((class_id, class_name))
+            simple_match_count += 1
+
+        if simple_match_count > 0:
+            parsed_pairs.sort(key=lambda item: item[0])
+            return [name for _class_id, name in parsed_pairs]
+
+        payload = json.loads(text)
+        categories = payload.get("categories", payload if isinstance(payload, list) else [])
+        if not isinstance(categories, list) or not categories:
+            return None
+
+        if all(isinstance(category, dict) and isinstance(category.get("id"), int) for category in categories if isinstance(category, dict)):
+            categories = sorted(categories, key=lambda category: int(category["id"]))
+
+        names = [str(category.get("name", "")).strip() for category in categories if str(category.get("name", "")).strip()]
+        return names or None
+    except Exception as exc:
+        raise ValueError(f"Invalid categories input: {exc}") from exc
+
+
+def _resolve_class_names(cfg, categories_json_text: Optional[str] = None):
+    explicit_names = _parse_class_names_json(categories_json_text)
+    if explicit_names:
+        return explicit_names
+
+    expected_num_classes = _get_cfg_num_classes(cfg, "maskdino")
+    dataset_names = []
+
+    try:
+        dataset_names.extend(list(getattr(cfg.DATASETS, "TEST", [])))
+    except Exception:
+        pass
+    try:
+        dataset_names.extend(list(getattr(cfg.DATASETS, "TRAIN", [])))
+    except Exception:
+        pass
+
+    dataset_names = [name for name in dataset_names if name]
+    fallback_names = None
+
+    for dataset_name in dataset_names:
+        try:
+            meta = MetadataCatalog.get(dataset_name)
+        except Exception:
+            meta = None
+
+        if meta is not None:
+            existing_names = getattr(meta, "thing_classes", None)
+            if isinstance(existing_names, (list, tuple)) and existing_names and not _looks_generic_class_names(existing_names):
+                if expected_num_classes <= 0 or len(existing_names) == expected_num_classes:
+                    return list(existing_names)
+                if fallback_names is None:
+                    fallback_names = list(existing_names)
+
+    if expected_num_classes > 0 and len(DEFAULT_CLASS_NAMES) == expected_num_classes:
+        return list(DEFAULT_CLASS_NAMES)
+    if fallback_names:
+        return fallback_names
+    return list(DEFAULT_CLASS_NAMES) if DEFAULT_CLASS_NAMES else None
+
+
+def _inspect_checkpoint(weights_path: Optional[str]):
+    """Infer model family and class-count hints from checkpoint tensors."""
+    info = {
+        "state_dict": None,
+        "detected_model_type": None,
+        "num_classes": None,
+        "num_classes_source": None,
+        "maskdino_class_embed_outputs": None,
+    }
+
+    try:
+        state_dict = _load_checkpoint_state_dict(weights_path)
+        if not state_dict:
+            return info
+
+        info["state_dict"] = state_dict
+        keys = list(state_dict.keys())
+        has_maskrcnn_head = any("roi_heads.box_predictor.cls_score" in key for key in keys)
+        has_maskdino_head = any("sem_seg_head.predictor.class_embed" in key or "query_feat" in key for key in keys)
+
+        if has_maskrcnn_head and not has_maskdino_head:
+            info["detected_model_type"] = "maskrcnn"
+        elif has_maskdino_head and not has_maskrcnn_head:
+            info["detected_model_type"] = "maskdino"
+
+        maskrcnn_key = "roi_heads.box_predictor.cls_score.weight"
+        if maskrcnn_key in state_dict and hasattr(state_dict[maskrcnn_key], "shape"):
+            logits = int(state_dict[maskrcnn_key].shape[0])
+            if logits > 1:
+                info["num_classes"] = logits - 1
+                info["num_classes_source"] = f"{maskrcnn_key} ({logits} logits including background)"
+
+        label_key = "sem_seg_head.predictor.label_enc.weight"
+        if label_key in state_dict and hasattr(state_dict[label_key], "shape"):
+            label_classes = int(state_dict[label_key].shape[0])
+            if label_classes > 0:
+                info["num_classes"] = label_classes
+                info["num_classes_source"] = label_key
+
+        class_embed_key = "sem_seg_head.predictor.class_embed.weight"
+        if class_embed_key in state_dict and hasattr(state_dict[class_embed_key], "shape"):
+            info["maskdino_class_embed_outputs"] = int(state_dict[class_embed_key].shape[0])
+            if info["num_classes"] is None and info["maskdino_class_embed_outputs"] > 0:
+                info["num_classes_source"] = class_embed_key
+    except Exception:
+        return info
+
+    return info
+
+
+def _infer_checkpoint_num_classes(info, cfg, model_type: str):
+    """Resolve an exact or best-effort class count from checkpoint metadata."""
+    num_classes = info.get("num_classes")
+    if num_classes is not None and int(num_classes) > 0:
+        return int(num_classes), info.get("num_classes_source") or "checkpoint"
+
+    if model_type != "maskdino":
+        return None, None
+
+    class_embed_outputs = info.get("maskdino_class_embed_outputs")
+    if not class_embed_outputs or int(class_embed_outputs) <= 0:
+        return None, None
+
+    class_embed_outputs = int(class_embed_outputs)
+    cfg_classes = _get_cfg_num_classes(cfg, model_type)
+    candidates = [class_embed_outputs]
+    if class_embed_outputs > 1:
+        candidates.append(class_embed_outputs - 1)
+    candidates = [candidate for candidate in dict.fromkeys(candidates) if candidate > 0]
+
+    if cfg_classes in candidates:
+        return cfg_classes, f"sem_seg_head.predictor.class_embed.weight matched config-compatible candidate from {class_embed_outputs} outputs"
+
+    if len(candidates) == 1:
+        return candidates[0], f"sem_seg_head.predictor.class_embed.weight ({class_embed_outputs} outputs)"
+
+    return None, None
 
 
 def _release_predictor_cache():
@@ -85,65 +330,6 @@ def _release_predictor_cache():
 
 def build_predictor(model_type: str, config_file: Optional[str], weights: Optional[str], score_thresh: float = 0.5):
     cfg = get_cfg()
-
-    def _checkpoint_looks_compatible(wpath: str, mtype: str):
-        """Best-effort compatibility check between checkpoint keys and model type."""
-        try:
-            if not wpath or not os.path.isfile(wpath):
-                return True, ""
-            ckpt = torch.load(wpath, map_location="cpu")
-            sd = ckpt.get("model", ckpt) if isinstance(ckpt, dict) else ckpt
-            if not isinstance(sd, dict):
-                return True, ""
-            keys = list(sd.keys())
-            if not keys:
-                return True, ""
-
-            has_maskrcnn_head = any("roi_heads.box_predictor.cls_score" in k for k in keys)
-            has_maskdino_head = any("sem_seg_head.predictor.class_embed" in k or "query_feat" in k for k in keys)
-
-            if mtype == "maskrcnn" and has_maskdino_head and not has_maskrcnn_head:
-                return False, "Selected weights look like MaskDINO but model_type is maskrcnn."
-            if mtype == "maskdino" and has_maskrcnn_head and not has_maskdino_head:
-                return False, "Selected weights look like Mask R-CNN but model_type is maskdino."
-
-            # Additional class-count compatibility checks by head tensor shape.
-            if mtype == "maskrcnn":
-                try:
-                    key = "roi_heads.box_predictor.cls_score.weight"
-                    if key in sd and hasattr(sd[key], "shape"):
-                        head_classes = int(sd[key].shape[0])
-                        cfg_classes = int(getattr(cfg.MODEL.ROI_HEADS, "NUM_CLASSES", 0)) + 1
-                        if cfg_classes > 1 and head_classes != cfg_classes:
-                            return False, (
-                                f"Mask R-CNN class mismatch: checkpoint cls_score has {head_classes} outputs, "
-                                f"but config expects {cfg_classes} (NUM_CLASSES={cfg_classes - 1})."
-                            )
-                except Exception:
-                    pass
-            else:
-                try:
-                    key = "sem_seg_head.predictor.class_embed.weight"
-                    if key in sd and hasattr(sd[key], "shape"):
-                        head_classes = int(sd[key].shape[0])
-                        # MaskDINO uses SEM_SEG_HEAD.NUM_CLASSES, not ROI_HEADS.NUM_CLASSES
-                        if hasattr(cfg.MODEL, "SEM_SEG_HEAD") and hasattr(cfg.MODEL.SEM_SEG_HEAD, "NUM_CLASSES"):
-                            cfg_classes = int(cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES)
-                        else:
-                            cfg_classes = int(getattr(cfg.MODEL.ROI_HEADS, "NUM_CLASSES", 0))
-                        # Some checkpoints include/no-include background class; accept +/-1.
-                        if cfg_classes > 0 and head_classes not in (cfg_classes, cfg_classes + 1, max(1, cfg_classes - 1)):
-                            return False, (
-                                f"MaskDINO class mismatch: checkpoint class_embed has {head_classes} outputs, "
-                                f"while config suggests about {cfg_classes} (MODEL.SEM_SEG_HEAD.NUM_CLASSES)."
-                            )
-                except Exception:
-                    pass
-
-            return True, ""
-        except Exception:
-            # Do not hard-fail on inspection issues; loading path below will report real errors.
-            return True, ""
 
     # Add MaskDINO (+deeplab) config if requested and available
     if model_type == "maskdino":
@@ -194,15 +380,27 @@ def build_predictor(model_type: str, config_file: Optional[str], weights: Option
                 print("[WARN] detectron2.model_zoo not available to resolve MODEL_ZOO: weights placeholder")
                 weights = ""
 
-        # Guard against config/weight mismatches that produce unusable outputs.
-        try:
-            ok, reason = _checkpoint_looks_compatible(weights, model_type)
-            if not ok:
-                raise RuntimeError(reason)
-        except RuntimeError:
-            raise
-        except Exception:
-            pass
+        checkpoint_info = _inspect_checkpoint(weights)
+        detected_model_type = checkpoint_info.get("detected_model_type")
+        if detected_model_type and detected_model_type != model_type:
+            raise RuntimeError(
+                f"Selected weights look like {detected_model_type} but model_type is {model_type}."
+            )
+
+        inferred_num_classes, infer_source = _infer_checkpoint_num_classes(checkpoint_info, cfg, model_type)
+        if inferred_num_classes is not None:
+            current_num_classes = _get_cfg_num_classes(cfg, model_type)
+            if inferred_num_classes != current_num_classes:
+                _set_cfg_num_classes(cfg, inferred_num_classes)
+                print(
+                    f"[INFO] Overrode cfg NUM_CLASSES from checkpoint: "
+                    f"{current_num_classes} -> {inferred_num_classes} ({infer_source})"
+                )
+        elif checkpoint_info.get("maskdino_class_embed_outputs"):
+            print(
+                "[WARN] Could not infer an exact class count from checkpoint; "
+                "keeping NUM_CLASSES from config."
+            )
 
         cfg.MODEL.WEIGHTS = weights
 
@@ -287,7 +485,7 @@ def _rescale_normalized_instances_inplace(instances, image_shape):
     return False
 
 
-def prepare_output(prediction, image, cfg, include_json: bool = True):
+def prepare_output(prediction, image, cfg, include_json: bool = True, categories_json_text: Optional[str] = None):
     out_json = {
         "instances": [],
     }
@@ -333,12 +531,24 @@ def prepare_output(prediction, image, cfg, include_json: bool = True):
         # dataset registration didn't set `thing_classes`, populate from
         # a sensible project-default list so labels render correctly.
         try:
-            if meta is not None and (not hasattr(meta, 'thing_classes') or not getattr(meta, 'thing_classes')):
+            current_names = getattr(meta, 'thing_classes', None) if meta is not None else None
+            cfg_num_classes = _get_cfg_num_classes(cfg, "maskdino")
+            names_missing = not current_names
+            names_generic = _looks_generic_class_names(current_names)
+            names_mismatch = bool(current_names) and cfg_num_classes > 0 and len(current_names) != cfg_num_classes
+
+            if meta is not None and (names_missing or names_generic or names_mismatch):
+                class_names = _resolve_class_names(cfg, categories_json_text)
+                if cfg_num_classes > 0 and class_names and len(class_names) != cfg_num_classes:
+                    print(
+                        f"[WARN] Class-name count mismatch: resolved {len(class_names)} names "
+                        f"for cfg NUM_CLASSES={cfg_num_classes}; labels may be incomplete."
+                    )
                 try:
-                    meta.thing_classes = DEFAULT_CLASS_NAMES
+                    meta.thing_classes = class_names
                 except Exception:
                     try:
-                        MetadataCatalog.get(test_ds).set(thing_classes=DEFAULT_CLASS_NAMES)
+                        MetadataCatalog.get(test_ds).set(thing_classes=class_names)
                     except Exception:
                         pass
         except Exception:
@@ -457,6 +667,132 @@ def prepare_output(prediction, image, cfg, include_json: bool = True):
     return vis, out_json if include_json else None
 
 
+def _build_detection_summary(instances, cfg, categories_json_text: Optional[str] = None):
+    """Summarize detections by class name, count, and confidence statistics."""
+    if instances is None:
+        return "No detections."
+
+    try:
+        cpu_instances = instances.to("cpu")
+    except Exception:
+        cpu_instances = instances
+
+    if len(cpu_instances) == 0:
+        return "No detections."
+
+    class_names = _resolve_class_names(cfg, categories_json_text) or []
+
+    try:
+        scores = cpu_instances.scores.tolist() if cpu_instances.has("scores") else []
+    except Exception:
+        scores = []
+    try:
+        class_ids = cpu_instances.pred_classes.tolist() if cpu_instances.has("pred_classes") else []
+    except Exception:
+        class_ids = []
+
+    if not class_ids:
+        total_count = len(cpu_instances)
+        if scores:
+            avg_conf = sum(float(score) for score in scores) / max(1, len(scores))
+            max_conf = max(float(score) for score in scores)
+            return f"Detections: {total_count}\nunknown: count={total_count}, avg_conf={avg_conf:.3f}, max_conf={max_conf:.3f}"
+        return f"Detections: {total_count}"
+
+    summary_by_class = {}
+    for index, class_id in enumerate(class_ids):
+        class_id = int(class_id)
+        if 0 <= class_id < len(class_names):
+            class_name = class_names[class_id]
+        else:
+            class_name = f"class_{class_id}"
+
+        item = summary_by_class.setdefault(class_name, {"count": 0, "scores": []})
+        item["count"] += 1
+        if index < len(scores):
+            item["scores"].append(float(scores[index]))
+
+    lines = [f"Detections: {len(cpu_instances)}"]
+    for class_name in sorted(summary_by_class.keys()):
+        item = summary_by_class[class_name]
+        if item["scores"]:
+            avg_conf = sum(item["scores"]) / len(item["scores"])
+            max_conf = max(item["scores"])
+            lines.append(
+                f"{class_name}: count={item['count']}, avg_conf={avg_conf:.3f}, max_conf={max_conf:.3f}"
+            )
+        else:
+            lines.append(f"{class_name}: count={item['count']}")
+
+    return "\n".join(lines)
+
+
+def _collect_detection_stats(instances, cfg, categories_json_text: Optional[str] = None):
+    """Collect per-class count/confidence stats from instances."""
+    if instances is None:
+        return 0, {}
+
+    try:
+        cpu_instances = instances.to("cpu")
+    except Exception:
+        cpu_instances = instances
+
+    if len(cpu_instances) == 0:
+        return 0, {}
+
+    class_names = _resolve_class_names(cfg, categories_json_text) or []
+
+    try:
+        scores = cpu_instances.scores.tolist() if cpu_instances.has("scores") else []
+    except Exception:
+        scores = []
+    try:
+        class_ids = cpu_instances.pred_classes.tolist() if cpu_instances.has("pred_classes") else []
+    except Exception:
+        class_ids = []
+
+    class_stats = {}
+    if not class_ids:
+        class_stats["unknown"] = {
+            "count": len(cpu_instances),
+            "scores": [float(score) for score in scores],
+        }
+        return len(cpu_instances), class_stats
+
+    for index, class_id in enumerate(class_ids):
+        class_id = int(class_id)
+        if 0 <= class_id < len(class_names):
+            class_name = class_names[class_id]
+        else:
+            class_name = f"class_{class_id}"
+
+        item = class_stats.setdefault(class_name, {"count": 0, "scores": []})
+        item["count"] += 1
+        if index < len(scores):
+            item["scores"].append(float(scores[index]))
+
+    return len(cpu_instances), class_stats
+
+
+def _format_detection_stats(total_count: int, class_stats: dict, title: Optional[str] = None):
+    lines = []
+    if title:
+        lines.append(title)
+    lines.append(f"Detections: {int(total_count)}")
+
+    for class_name in sorted(class_stats.keys()):
+        item = class_stats[class_name]
+        count = int(item.get("count", 0))
+        scores = item.get("scores", [])
+        if scores:
+            avg_conf = sum(float(score) for score in scores) / max(1, len(scores))
+            max_conf = max(float(score) for score in scores)
+            lines.append(f"{class_name}: count={count}, avg_conf={avg_conf:.3f}, max_conf={max_conf:.3f}")
+        else:
+            lines.append(f"{class_name}: count={count}")
+    return "\n".join(lines)
+
+
 _IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp'}
 
 
@@ -476,7 +812,7 @@ def _expand_folder(path: str, recursive: bool = False):
     return sorted(results)
 
 
-def run_inference(images, model_type, config_file, weights, score_thresh, return_json, recursive: bool = False):
+def run_inference(images, model_type, config_file, weights, score_thresh, return_json, categories_json_text=None, recursive: bool = False):
     """
     Accept either a single image (numpy array), a file path, a folder path,
     or a list of any mix of the above.  Folder paths are expanded to all
@@ -487,7 +823,7 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
     regardless of the `return_json` flag.
     """
     if images is None:
-        return None, "{}"
+        return None, "{}", "No detections."
 
     # Normalize inputs to a list
     is_batch = isinstance(images, (list, tuple))
@@ -525,7 +861,7 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
     imgs = expanded
 
     if not imgs:
-        return [], '{"error": "No images found."}'
+        return [], '{"error": "No images found."}', "No detections."
 
     # Convert uploaded files/paths to numpy arrays if necessary. Try many
     # heuristics so Gradio folder-drag payloads are handled across versions.
@@ -656,7 +992,15 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
         continue
 
     if not proc_imgs:
-        return [], '{"error": "No decodable images found in current selection. Re-select files/folder and try again."}'
+        return [], '{"error": "No decodable images found in current selection. Re-select files/folder and try again."}', "No detections."
+
+    try:
+        parsed_class_names = _parse_class_names_json(categories_json_text)
+    except ValueError as exc:
+        return [], json.dumps({"error": str(exc)}, indent=2), str(exc)
+
+    if parsed_class_names:
+        print(f"[INFO] Loaded {len(parsed_class_names)} class names from UI categories JSON")
 
     predictor, cfg = get_cached_predictor(model_type, config_file.strip() if config_file else None, weights.strip() if weights else None, float(score_thresh))
     try:
@@ -671,6 +1015,9 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
 
     vis_list = []
     json_list = []
+    summary_list = []
+    batch_total_detections = 0
+    batch_class_stats = {}
     
     for i, img in enumerate(proc_imgs):
         try:
@@ -770,22 +1117,46 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
                         pass
             except Exception:
                 pass
-            vis, out_json = prepare_output(outputs, img, cfg, include_json=bool(return_json))
+            vis, out_json = prepare_output(
+                outputs,
+                img,
+                cfg,
+                include_json=bool(return_json),
+                categories_json_text=categories_json_text,
+            )
+            summary_text = _build_detection_summary(
+                outputs.get("instances", None),
+                cfg,
+                categories_json_text=categories_json_text,
+            )
+            image_total, image_class_stats = _collect_detection_stats(
+                outputs.get("instances", None),
+                cfg,
+                categories_json_text=categories_json_text,
+            )
+            batch_total_detections += int(image_total)
+            for class_name, class_item in image_class_stats.items():
+                merged = batch_class_stats.setdefault(class_name, {"count": 0, "scores": []})
+                merged["count"] += int(class_item.get("count", 0))
+                merged["scores"].extend(class_item.get("scores", []))
             # prepare_output returns RGB-arrays; Gradio accepts numpy arrays
             try:
                 vis_list.append(vis)
             except Exception:
                 vis_list.append(vis)
+            summary_list.append(summary_text)
             if return_json:
                 json_list.append(out_json if isinstance(out_json, dict) else {"error": "JSON generation failed"})
         except Exception as e:
             print(f"[WARN] Inference failed for image {i}: {e}")
+            summary_list.append(f"Error: {e}")
             if return_json:
                 json_list.append({"error": str(e)})
 
     # If only a single input was provided, return a single image instead of a list
     if not is_batch:
         vis = vis_list[0] if vis_list else None
+        summary_text = summary_list[0] if summary_list else "No detections."
         if return_json and json_list:
             out_json = json.dumps(json_list[0], separators=(",", ":"))
             if len(out_json) > MAX_TEXTBOX_JSON_CHARS:
@@ -798,7 +1169,7 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
                 )
         else:
             out_json = ""
-        return vis, out_json
+        return vis, out_json, summary_text
 
     # Batch case: return gallery (list of images) and JSON array if requested
     if return_json:
@@ -814,13 +1185,35 @@ def run_inference(images, model_type, config_file, weights, score_thresh, return
             )
     else:
         out_json = ""
-    return vis_list, out_json
+    per_image_summary_text = "\n\n".join(
+        f"Image {index + 1}\n{summary}"
+        for index, summary in enumerate(summary_list)
+    ) if summary_list else "No detections."
+
+    total_summary_text = _format_detection_stats(
+        batch_total_detections,
+        batch_class_stats,
+        title="Total (all images)",
+    )
+    summary_text = f"{total_summary_text}\n\n{per_image_summary_text}" if summary_list else total_summary_text
+    return vis_list, out_json, summary_text
 
 
 def _release_inference_gpu_memory():
     """Release GPU memory held by the cached predictor on demand."""
     _release_predictor_cache()
-    return "Model cache cleared. GPU memory released."
+    message = "Model cache cleared. GPU memory released."
+    return message, "", None, None, gr.update(interactive=False)
+
+
+def _write_download_file(prefix: str, suffix: str, content: str):
+    """Write downloadable text content to a temp file and return its path."""
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False, suffix=suffix, prefix=prefix) as tmp:
+            tmp.write(content if content is not None else "")
+            return tmp.name
+    except Exception:
+        return None
 
 
 def launch_ui():
@@ -855,62 +1248,159 @@ def launch_ui():
         # maskdino defaults (repo-local)
         return "maskdino_drone_config.yaml", "output/model_final.pth"
 
-    with gr.Blocks() as demo:
-        gr.Markdown("# Inference UI — MaskDINO (default)\nUpload an image, choose config/weights, and run inference.")
-        with gr.Row():
-            model_type = gr.Dropdown(choices=["maskrcnn", "maskdino"], value="maskdino", label="Model Type")
-            config_file = gr.Textbox(label="Config file (path)", value="maskdino_drone_config.yaml")
-            weights = gr.Textbox(label="Weights file (path)", value="output/model_final.pth")
+    with gr.Blocks(css="""
+    .linked-input-card {
+      border: 1px solid var(--border-color-primary, #b8bec7);
+      border-radius: 10px;
+      padding: 10px;
+      background: var(--background-fill-secondary, #f7f9fc);
+    }
+    .section-card {
+      border: 1px solid var(--border-color-primary, #b8bec7);
+      border-radius: 12px;
+      padding: 12px;
+      background: var(--block-background-fill, var(--background-fill-primary, #ffffff));
+      margin-bottom: 12px;
+    }
+    .compact-file .file-wrap,
+    .compact-file .wrap,
+    .compact-file [data-testid="file-upload"],
+    .compact-file [data-testid="file-upload-dropzone"] {
+            min-height: 112px !important;
+            max-height: 112px !important;
+      padding-top: 4px !important;
+      padding-bottom: 4px !important;
+    }
+        .download-button-wrap {
+            width: 80%;
+            margin: 12px auto 0 auto;
+        }
+        .download-button-wrap button {
+            width: 100%;
+            border-radius: 12px !important;
+            padding: 10px 16px !important;
+        }
+    """) as demo:
+        gr.Markdown("# Inference UI — MaskDINO (default)\nUpload an image, choose config/weights, and run inference.\nUse the file pickers to browse config/checkpoint files outside the repo folder.")
+        with gr.Group(elem_classes=["section-card"]):
+            gr.Markdown("### Inputs and settings")
+            with gr.Row():
+                model_type = gr.Dropdown(choices=["maskrcnn", "maskdino"], value="maskdino", label="Model Type")
+            with gr.Row():
+                with gr.Group(elem_classes=["linked-input-card"]):
+                    gr.Markdown("#### Config selector")
+                    config_file = gr.Textbox(label="Config file (path)", value="maskdino_drone_config.yaml")
+                    config_picker = gr.File(
+                        label="Browse .yaml/.yml",
+                        file_count="single",
+                        file_types=[".yaml", ".yml"],
+                        elem_classes=["compact-file"],
+                    )
+                with gr.Group(elem_classes=["linked-input-card"]):
+                    gr.Markdown("#### Weights selector")
+                    weights = gr.Textbox(label="Weights file (path)", value="output/model_final.pth")
+                    weights_picker = gr.File(
+                        label="Browse .pth/.pt",
+                        file_count="single",
+                        file_types=[".pth", ".pt"],
+                        elem_classes=["compact-file"],
+                    )
+            categories_json = gr.Textbox(
+                label="Categories",
+                value=DEFAULT_CATEGORIES_JSON,
+                lines=12,
+                max_lines=12,
+            )
+            # file_count="multiple" + no file_types restriction lets users drag-drop
+            # individual files OR an entire folder.
+            with gr.Group(elem_classes=["linked-input-card"]):
+                gr.Markdown("### Upload images for inference:")
+                img_in = gr.Files(
+                    label="Input images — drag & drop files or a folder here",
+                    file_count="multiple",
+                    elem_id="img_in_files",
+                    elem_classes=["compact-file"],
+                )
+                gr.HTML("""
+                    <div id="folder-picker-wrapper" style="margin-top:4px">
+                        <input type="file" id="folder-picker-input" webkitdirectory multiple style="display:none">
+                        <button id="folder-picker-btn" type="button"
+                            style="padding:5px 14px;cursor:pointer;
+                                   background:var(--button-secondary-background-fill,#f0f0f0);
+                                   border:1px solid var(--border-color-primary,#bbb);
+                                   border-radius:4px;font-size:13px;color:inherit">
+                            &#128193; Select folder
+                        </button>
+                        <span id="folder-picker-status" style="margin-left:8px;font-size:12px;color:inherit"></span>
+                    </div>
+                    """)
+            with gr.Row():
+                score = gr.Slider(minimum=0.0, maximum=1.0, value=0.5, step=0.01, label="Score threshold")
 
         def on_model_change(mtype):
             cfg_def, w_def = _model_defaults(mtype)
             return gr.update(value=cfg_def), gr.update(value=w_def)
 
+        def on_weights_pick(file_obj):
+            if file_obj is None:
+                return gr.update()
+            # Gradio File returns an object with a temp path in `.name`.
+            picked_path = getattr(file_obj, "name", None)
+            if isinstance(picked_path, str) and picked_path.strip():
+                return gr.update(value=picked_path)
+            return gr.update()
+
+        def on_config_pick(file_obj):
+            if file_obj is None:
+                return gr.update()
+            picked_path = getattr(file_obj, "name", None)
+            if isinstance(picked_path, str) and picked_path.strip():
+                return gr.update(value=picked_path)
+            return gr.update()
+
         # Update config and weights textboxes when model type changes
         model_type.change(on_model_change, inputs=[model_type], outputs=[config_file, weights])
-        with gr.Row():
-            score = gr.Slider(minimum=0.0, maximum=1.0, value=0.5, step=0.01, label="Score threshold")
-            return_json = gr.Checkbox(label="Return JSON summary", value=False)
-        # file_count="multiple" + no file_types restriction lets users drag-drop
-        # individual files OR an entire folder.
-        img_in = gr.Files(
-            label="Input images — drag & drop files or a folder here",
-            file_count="multiple",
-            elem_id="img_in_files",
-        )
-        gr.HTML("""
-        <div id="folder-picker-wrapper" style="margin-top:4px">
-            <input type="file" id="folder-picker-input" webkitdirectory multiple style="display:none">
-            <button id="folder-picker-btn" type="button"
-                style="padding:5px 14px;cursor:pointer;background:#f0f0f0;
-                             border:1px solid #bbb;border-radius:4px;font-size:13px">
-                &#128193; Select folder
-            </button>
-            <span id="folder-picker-status" style="margin-left:8px;font-size:12px;color:#555"></span>
-        </div>
-        """)
-        img_out = gr.Gallery(label="Visualized output")
-        json_out = gr.Textbox(label="JSON output", interactive=False)
-
-        def _run(image, mtype, cfgf, wts, sc, rjson):
-            try:
-                vis, j = run_inference(image, mtype, cfgf, wts, sc, rjson)
-                return vis, j
-            except Exception as e:
-                return [], f"Error: {e}"
-
+        # Allow selecting config files from outside the repository.
+        config_picker.change(on_config_pick, inputs=[config_picker], outputs=[config_file])
+        # Allow selecting checkpoint files from outside the repository.
+        weights_picker.change(on_weights_pick, inputs=[weights_picker], outputs=[weights])
         with gr.Row():
             run_btn = gr.Button("Run Inference")
-            unload_btn = gr.Button("Unload Model")
+            unload_btn = gr.Button("Unload Model", interactive=False)
+
+        with gr.Group(elem_classes=["section-card"]):
+            gr.Markdown("### Outputs")
+            img_out = gr.Gallery(label="Visualized output")
+            with gr.Row():
+                with gr.Group(elem_classes=["linked-input-card"]):
+                    gr.Markdown("#### JSON output")
+                    json_out = gr.Textbox(label="JSON output", interactive=False, lines=14, max_lines=14)
+                    json_download = gr.DownloadButton("Download JSON", value=None, elem_classes=["download-button-wrap"])
+                with gr.Group(elem_classes=["linked-input-card"]):
+                    gr.Markdown("#### Detection summary")
+                    summary_out = gr.Textbox(label="Detection summary", interactive=False, lines=14, max_lines=14)
+                    summary_download = gr.DownloadButton("Download detections (.txt)", value=None, elem_classes=["download-button-wrap"])
+
+        def _run(image, mtype, cfgf, wts, sc, catjson):
+            try:
+                vis, j, summary = run_inference(image, mtype, cfgf, wts, sc, True, catjson)
+                json_file = _write_download_file("inference_", ".json", j) if j else None
+                txt_file = _write_download_file("detections_", ".txt", summary)
+                return vis, j, summary, json_file, txt_file, gr.update(interactive=True)
+            except Exception as e:
+                err = f"Error: {e}"
+                txt_file = _write_download_file("detections_", ".txt", err)
+                return [], err, err, None, txt_file, gr.update(interactive=False)
+
         run_btn.click(
             _run,
-            inputs=[img_in, model_type, config_file, weights, score, return_json],
-            outputs=[img_out, json_out],
+            inputs=[img_in, model_type, config_file, weights, score, categories_json],
+            outputs=[img_out, json_out, summary_out, json_download, summary_download, unload_btn],
         )
         unload_btn.click(
             _release_inference_gpu_memory,
             inputs=None,
-            outputs=[json_out],
+            outputs=[json_out, summary_out, json_download, summary_download, unload_btn],
         )
 
         _folder_js = """
