@@ -1094,6 +1094,17 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
         cfg.OUTPUT_DIR = "output_maskdino/trainer_output"
     os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
 
+    # Match train_m.py behavior: write Detectron2 logs under OUTPUT_DIR/log.txt.
+    try:
+        from detectron2.utils import comm as d2_comm
+        from detectron2.utils.logger import setup_logger as d2_setup_logger
+
+        d2_setup_logger(output=cfg.OUTPUT_DIR, distributed_rank=d2_comm.get_rank())
+        d2_setup_logger(output=cfg.OUTPUT_DIR, distributed_rank=d2_comm.get_rank(), name="maskdino")
+        print(f"[INFO] Logging to {os.path.join(cfg.OUTPUT_DIR, 'log.txt')}")
+    except Exception as e:
+        print(f"[WARN] Could not initialize file logging in OUTPUT_DIR: {e}")
+
     # Monkey-patch annotations_to_instances to dump offending annotations on ValueError
     try:
         from detectron2.data import detection_utils as dutils

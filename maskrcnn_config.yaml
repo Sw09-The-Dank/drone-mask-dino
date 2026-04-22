@@ -1,22 +1,28 @@
-# Self-contained config — merged from:
-#   detectron2/configs/Base-RCNN-FPN.yaml
-#   detectron2/configs/COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml
-# Project-specific overrides are applied on top.
+# Self-contained config — architecture mirrors the best Detectron2 R50-FPN variant:
+#   detectron2/configs/Misc/mask_rcnn_R_50_FPN_3x_gn.yaml  (box AP 42.6 / mask AP 38.6)
+# Base skeleton from: detectron2/configs/Base-RCNN-FPN.yaml
+# Project-specific overrides (classes, anchors, schedule, inference thresholds) applied on top.
 
 VERSION: 2
 
 MODEL:
   META_ARCHITECTURE: "GeneralizedRCNN"
-  # Pretrained backbone weights (resume_or_load() will override with checkpoint when present).
-  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  # COCO-pretrained GN Mask R-CNN weights (model zoo id 138602888).
+  # Matches the best same-backbone variant (R50-FPN-GN 3x, mask AP 38.6 on COCO val).
+  WEIGHTS: "detectron2://Misc/mask_rcnn_R_50_FPN_3x_gn/138602888/model_final_dc5d9e.pkl"
   MASK_ON: True
   BACKBONE:
     NAME: "build_resnet_fpn_backbone"
   RESNETS:
     DEPTH: 50
     OUT_FEATURES: ["res2", "res3", "res4", "res5"]
+    # GN variant: use Group Normalization instead of BN; MSRA ResNets use stride in 1x1
+    # but GN-pretrained R50 was trained with STRIDE_IN_1X1: False.
+    NORM: "GN"
+    STRIDE_IN_1X1: False
   FPN:
     IN_FEATURES: ["res2", "res3", "res4", "res5"]
+    NORM: "GN"
   ANCHOR_GENERATOR:
     # Smaller anchors to better match small drone instances.
     SIZES: [[8], [16], [32], [64], [128]]
@@ -26,22 +32,30 @@ MODEL:
     # Increased proposal budget to improve recall on hard/small objects.
     PRE_NMS_TOPK_TRAIN: 4000
     POST_NMS_TOPK_TRAIN: 2000
-    PRE_NMS_TOPK_TEST: 2000
-    POST_NMS_TOPK_TEST: 1000
+    PRE_NMS_TOPK_TEST: 1500
+    POST_NMS_TOPK_TEST: 600
+    # Slightly stricter RPN NMS helps reduce near-duplicate proposals.
+    NMS_THRESH: 0.6
   ROI_HEADS:
     NAME: "StandardROIHeads"
     IN_FEATURES: ["p2", "p3", "p4", "p5"]
     BATCH_SIZE_PER_IMAGE: 256
     # train.py may infer this from JSON categories at runtime.
     NUM_CLASSES: 8
-    SCORE_THRESH_TEST: 0.3
+    # Higher threshold + stricter NMS reduces stacked/overlapping masks at inference.
+    SCORE_THRESH_TEST: 0.5
+    NMS_THRESH_TEST: 0.4
   ROI_BOX_HEAD:
     NAME: "FastRCNNConvFCHead"
-    NUM_FC: 2
+    # GN variant: 4 conv layers + 1 FC (vs baseline 0 conv + 2 FC); GN throughout.
+    NUM_CONV: 4
+    NUM_FC: 1
+    NORM: "GN"
     POOLER_RESOLUTION: 7
   ROI_MASK_HEAD:
     NAME: "MaskRCNNConvUpsampleHead"
     NUM_CONV: 4
+    NORM: "GN"
     POOLER_RESOLUTION: 14
 
 DATASETS:
@@ -59,18 +73,21 @@ DATALOADER:
 SOLVER:
   IMS_PER_BATCH: 8
   BASE_LR: 0.0003
-  MAX_ITER: 360000
-  WARMUP_ITERS: 1000
-  STEPS: [240000, 320000]
+  # 80k iteration budget; step milestones follow GN-3x proportions (~77.5% / ~92.5%).
+  MAX_ITER: 80000
+  WARMUP_ITERS: 500
+  STEPS: [62000, 74000]
   GAMMA: 0.1
-  CHECKPOINT_PERIOD: 5000
+  CHECKPOINT_PERIOD: 4000
   CLIP_GRADIENTS:
     ENABLED: True
     CLIP_TYPE: "norm"
     CLIP_VALUE: 1.0
 
 TEST:
-  EVAL_PERIOD: 20000
+  EVAL_PERIOD: 10000
+  # Cap detections/image to suppress low-confidence duplicate masks.
+  DETECTIONS_PER_IMAGE: 50
 
 INPUT:
   # Higher train/test scales generally improve small-object instance recall.
