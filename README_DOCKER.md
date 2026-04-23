@@ -273,3 +273,6 @@ When continuing:
   -w /workspace ^
   maskdino-demo:latest ^
   python scripts/inference_ui.py
+
+
+  docker run --gpus all --shm-size=8g -v "$(pwd)":/workspace -w /workspace maskdino-demo:latest python train.py --train-json dataset/DatasetV2/train.json --val-json dataset/DatasetV2/test.json --images-root dataset/DatasetV2 --config-file maskrcnn_config.yaml --output-dir output/maskrcnn/DatasetV2  --epochs 2

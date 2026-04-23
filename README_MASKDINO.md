@@ -459,7 +459,7 @@ sudo docker run --gpus all --rm -it \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/m_ddp.sh 2 1 1 169.254.18.231 29500 \
-    --from-scratch DATALOADER.NUM_WORKERS 0 TEST.EVAL_PERIOD 0
+    --resume --max-iter 20000 DATALOADER.NUM_WORKERS 0 TEST.EVAL_PERIOD 0
   "
 ```
 
@@ -485,7 +485,7 @@ sudo docker run --gpus all --rm -it \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/m_ddp.sh 2 1 0 169.254.18.231 29500 \
-    --from-scratch DATALOADER.NUM_WORKERS 0 TEST.EVAL_PERIOD 0
+    --resume --max-iter 20000 DATALOADER.NUM_WORKERS 0 TEST.EVAL_PERIOD 0
   "
 
 kill $SYNC_PID
