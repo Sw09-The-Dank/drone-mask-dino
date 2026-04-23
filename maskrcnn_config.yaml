@@ -1,61 +1,58 @@
-# Self-contained config — architecture mirrors the best Detectron2 R50-FPN variant:
-#   detectron2/configs/Misc/mask_rcnn_R_50_FPN_3x_gn.yaml  (box AP 42.6 / mask AP 38.6)
-# Base skeleton from: detectron2/configs/Base-RCNN-FPN.yaml
-# Project-specific overrides (classes, anchors, schedule, inference thresholds) applied on top.
+# Self-contained config — aligned to Detectron2 new baseline:
+#   configs/new_baselines/mask_rcnn_R_50_FPN_400ep_LSJ.py
+# Target reference numbers on COCO val2017: box AP 47.4 / mask AP 42.5.
+#
+# Note: LSJ's exact ResizeScale+FixedSizeCrop augmentation is a LazyConfig pipeline.
+# This YAML approximates it with fixed 1024 train/test sizing and crop settings.
 
 VERSION: 2
 
 MODEL:
   META_ARCHITECTURE: "GeneralizedRCNN"
-  # COCO-pretrained GN Mask R-CNN weights (model zoo id 138602888).
-  # Matches the best same-backbone variant (R50-FPN-GN 3x, mask AP 38.6 on COCO val).
-  WEIGHTS: "detectron2://Misc/mask_rcnn_R_50_FPN_3x_gn/138602888/model_final_dc5d9e.pkl"
+  # Default to the released R50-FPN 400ep LSJ checkpoint.
+  WEIGHTS: "https://dl.fbaipublicfiles.com/detectron2/new_baselines/mask_rcnn_R_50_FPN_400ep_LSJ/42019571/model_final_14d201.pkl"
   MASK_ON: True
   BACKBONE:
     NAME: "build_resnet_fpn_backbone"
+    FREEZE_AT: 0
   RESNETS:
     DEPTH: 50
     OUT_FEATURES: ["res2", "res3", "res4", "res5"]
-    # GN variant: use Group Normalization instead of BN; MSRA ResNets use stride in 1x1
-    # but GN-pretrained R50 was trained with STRIDE_IN_1X1: False.
-    NORM: "GN"
-    STRIDE_IN_1X1: False
+    NORM: "SyncBN"
   FPN:
     IN_FEATURES: ["res2", "res3", "res4", "res5"]
-    NORM: "GN"
+    NORM: "SyncBN"
   ANCHOR_GENERATOR:
-    # Smaller anchors to better match small drone instances.
-    SIZES: [[8], [16], [32], [64], [128]]
+    SIZES: [[32], [64], [128], [256], [512]]
     ASPECT_RATIOS: [[0.5, 1.0, 2.0]]
   RPN:
     IN_FEATURES: ["p2", "p3", "p4", "p5", "p6"]
-    # Increased proposal budget to improve recall on hard/small objects.
-    PRE_NMS_TOPK_TRAIN: 4000
-    POST_NMS_TOPK_TRAIN: 2000
-    PRE_NMS_TOPK_TEST: 1500
-    POST_NMS_TOPK_TEST: 600
-    # Slightly stricter RPN NMS helps reduce near-duplicate proposals.
-    NMS_THRESH: 0.6
+    # 2-conv RPN head in LSJ baseline.
+    CONV_DIMS: [-1, -1]
+    PRE_NMS_TOPK_TRAIN: 2000
+    POST_NMS_TOPK_TRAIN: 1000
+    PRE_NMS_TOPK_TEST: 1000
+    POST_NMS_TOPK_TEST: 1000
+    NMS_THRESH: 0.7
   ROI_HEADS:
     NAME: "StandardROIHeads"
     IN_FEATURES: ["p2", "p3", "p4", "p5"]
-    BATCH_SIZE_PER_IMAGE: 256
+    BATCH_SIZE_PER_IMAGE: 512
     # train.py may infer this from JSON categories at runtime.
     NUM_CLASSES: 8
-    # Higher threshold + stricter NMS reduces stacked/overlapping masks at inference.
-    SCORE_THRESH_TEST: 0.5
-    NMS_THRESH_TEST: 0.4
+    SCORE_THRESH_TEST: 0.05
+    NMS_THRESH_TEST: 0.5
   ROI_BOX_HEAD:
     NAME: "FastRCNNConvFCHead"
-    # GN variant: 4 conv layers + 1 FC (vs baseline 0 conv + 2 FC); GN throughout.
+    # LSJ baseline uses 4 conv + 1 fc box head.
     NUM_CONV: 4
     NUM_FC: 1
-    NORM: "GN"
+    NORM: "SyncBN"
     POOLER_RESOLUTION: 7
   ROI_MASK_HEAD:
     NAME: "MaskRCNNConvUpsampleHead"
     NUM_CONV: 4
-    NORM: "GN"
+    NORM: "SyncBN"
     POOLER_RESOLUTION: 14
 
 DATASETS:
@@ -66,19 +63,20 @@ DATASETS:
     - drone_val_polygons
 
 DATALOADER:
-  # Keep workers moderate for Docker stability.
-  NUM_WORKERS: 8
+  NUM_WORKERS: 4
   SAMPLER_TRAIN: TrainingSampler
 
 SOLVER:
-  IMS_PER_BATCH: 8
-  BASE_LR: 0.0003
-  # 80k iteration budget; step milestones follow GN-3x proportions (~77.5% / ~92.5%).
-  MAX_ITER: 80000
+  IMS_PER_BATCH: 64
+  BASE_LR: 0.1
+  MAX_ITER: 737500
   WARMUP_ITERS: 500
-  STEPS: [62000, 74000]
+  WARMUP_FACTOR: 0.067
+  STEPS: [655556, 710184]
   GAMMA: 0.1
-  CHECKPOINT_PERIOD: 4000
+  WEIGHT_DECAY: 0.00004
+  MOMENTUM: 0.9
+  CHECKPOINT_PERIOD: 5000
   CLIP_GRADIENTS:
     ENABLED: True
     CLIP_TYPE: "norm"
@@ -86,15 +84,19 @@ SOLVER:
 
 TEST:
   EVAL_PERIOD: 10000
-  # Cap detections/image to suppress low-confidence duplicate masks.
-  DETECTIONS_PER_IMAGE: 50
+  DETECTIONS_PER_IMAGE: 100
 
 INPUT:
-  # Higher train/test scales generally improve small-object instance recall.
-  MIN_SIZE_TRAIN: [640, 800, 960, 1024]
-  MAX_SIZE_TRAIN: 1600
+  # LSJ approximation in YAML form: fixed 1024 train/test size + random crop.
+  MIN_SIZE_TRAIN: [1024]
+  MAX_SIZE_TRAIN: 1024
+  MIN_SIZE_TRAIN_SAMPLING: "choice"
+  CROP:
+    ENABLED: True
+    TYPE: "absolute"
+    SIZE: [1024, 1024]
   MIN_SIZE_TEST: 1024
-  MAX_SIZE_TEST: 1600
+  MAX_SIZE_TEST: 1024
 
 # train.py explicitly sets OUTPUT_DIR near the end of setup.
 OUTPUT_DIR: output/maskrcnn/def
