@@ -1449,8 +1449,13 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     is_main = (rank == 0)
 
     RUN_EVALUATION = True  # Set to True to run evaluation after training
-    # Run evaluation on the validation set using COCOEvaluator if available (only on main)
-    if RUN_EVALUATION and is_main:
+    # Avoid a second distributed eval pass here: trainer already runs eval hooks.
+    # Running this block on rank 0 only while world_size>1 can stall on collectives.
+    if RUN_EVALUATION and is_distributed:
+        if is_main:
+            print("[INFO] Skipping custom post-train evaluation in distributed mode (avoids duplicate eval + rank mismatch timeout)")
+    # Run optional extra evaluation only for single-process runs.
+    elif RUN_EVALUATION and is_main:
         try:
             from detectron2.evaluation import COCOEvaluator, inference_on_dataset
             from detectron2.data import build_detection_test_loader
@@ -1463,7 +1468,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                 evaluator = COCOEvaluator(
                     val_dataset_name,
                     tasks=eval_tasks,
-                    distributed=is_distributed,
+                    distributed=False,
                     output_dir=_eval_out,
                 )
             except TypeError:
@@ -1471,7 +1476,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                 evaluator = COCOEvaluator(
                     val_dataset_name,
                     cfg,
-                    distributed=is_distributed,
+                    distributed=False,
                     output_dir=_eval_out,
                     tasks=eval_tasks,
                 )
