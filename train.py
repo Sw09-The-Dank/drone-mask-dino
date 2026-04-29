@@ -218,11 +218,17 @@ def setup_ddp_from_env():
         world_size = 1
 
     # set CUDA device for this process
-    if torch.cuda.is_available():
+    cuda_available = torch.cuda.is_available()
+    cuda_device_count = torch.cuda.device_count() if cuda_available else 0
+    cuda_visible_devices = os.environ.get('CUDA_VISIBLE_DEVICES', 'not-set')
+    print(f"[CUDA] is_available={cuda_available} device_count={cuda_device_count} CUDA_VISIBLE_DEVICES={cuda_visible_devices}")
+    
+    if cuda_available:
         try:
             torch.cuda.set_device(local_rank)
-        except Exception:
-            pass
+            print(f"[CUDA] set_device({local_rank}) succeeded")
+        except Exception as e:
+            print(f"[CUDA] set_device({local_rank}) failed: {e}")
         # Cap GPU memory so the process OOM-crashes instead of stalling
         try:
             frac = float(os.environ.get("CUDA_MEMORY_FRACTION", "0.85"))
@@ -230,10 +236,13 @@ def setup_ddp_from_env():
             print(f"[MEM] GPU memory fraction capped at {frac:.0%} for device {local_rank}")
         except Exception as e:
             print(f"[MEM] Could not set GPU memory fraction: {e}")
+    else:
+        print("[WARN] CUDA not available! Will use Gloo backend (SLOW)")
 
     # init torch.distributed if needed
     if torch.distributed.is_available() and not torch.distributed.is_initialized() and world_size > 1:
-        backend = 'nccl' if torch.cuda.is_available() else 'gloo'
+        backend = 'nccl' if cuda_available else 'gloo'
+        print(f"[DDP] Selecting backend: {backend}")
         torch.distributed.init_process_group(backend=backend, init_method='env://')
         rank = int(os.environ.get('RANK', os.environ.get('LOCAL_RANK', '0')))
         print(f"DDP INIT: backend={backend} RANK={rank} LOCAL_RANK={local_rank} WORLD_SIZE={world_size}")
@@ -1276,6 +1285,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
         @classmethod
         def build_train_loader(cls, cfg):
             from detectron2.data import DatasetMapper, build_detection_train_loader
+            from detectron2.utils import comm
 
             mapper = DatasetMapper(cfg, is_train=True)
             blur_prob = float(gaussian_blur_prob)
@@ -1296,7 +1306,22 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
             else:
                 print("[AUG] Gaussian blur disabled (cv2 missing or --gaussian-blur-prob<=0)")
 
-            return build_detection_train_loader(cfg, mapper=mapper)
+            # Ensure DistributedSampler is used in DDP context
+            # by default, build_detection_train_loader should do this, but explicitly check
+            loader = build_detection_train_loader(cfg, mapper=mapper)
+            
+            # Debug: verify DistributedSampler is being used
+            sampler = getattr(loader, 'sampler', None)
+            world_size = comm.get_world_size()
+            if world_size > 1:
+                from torch.utils.data.distributed import DistributedSampler as _DS
+                is_dist = isinstance(sampler, _DS)
+                if not is_dist:
+                    print(f"[WARN] DistributedSampler not detected! Sampler type: {type(sampler).__name__ if sampler else 'None'}")
+                else:
+                    print(f"[OK] Using DistributedSampler (rank={comm.get_rank()}, world_size={world_size})")
+            
+            return loader
 
     trainer = DroneTrainer(cfg)
     # resume=True will continue from last checkpoint if present
