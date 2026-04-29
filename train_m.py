@@ -1069,7 +1069,49 @@ if __name__ == "__main__":
                     num_train_images = len(_ej.get("images", []))
                 else:
                     num_train_images = 0
-                _batch = getattr(args, "ims_per_batch", None) or 1
+
+                # Resolve effective batch size in priority order:
+                # 1) explicit --ims-per-batch
+                # 2) SOLVER.IMS_PER_BATCH passed via args.opts
+                # 3) config file value (plus cfg overrides in args.opts)
+                # 4) fallback to 1
+                _batch = None
+                if getattr(args, "ims_per_batch", None) is not None:
+                    _batch = int(getattr(args, "ims_per_batch"))
+                else:
+                    try:
+                        _opts = list(getattr(args, "opts", []) or [])
+                        for _i in range(len(_opts) - 1):
+                            if _opts[_i] == "SOLVER.IMS_PER_BATCH":
+                                _batch = int(_opts[_i + 1])
+                    except Exception:
+                        _batch = None
+
+                    if _batch is None:
+                        try:
+                            _cfg_epoch = get_cfg()
+                            add_deeplab_config(_cfg_epoch)
+                            add_maskdino_config(_cfg_epoch)
+                            _cfg_epoch.merge_from_file(args.config_file)
+
+                            _safe_opts_epoch = []
+                            _i = 0
+                            _opts = list(getattr(args, "opts", []) or [])
+                            while _i < len(_opts):
+                                if _opts[_i] in ("--resume", "no_eval"):
+                                    _i += 1
+                                    continue
+                                _safe_opts_epoch.append(_opts[_i])
+                                _i += 1
+                            if _safe_opts_epoch:
+                                _cfg_epoch.merge_from_list(_safe_opts_epoch)
+
+                            _batch = int(_cfg_epoch.SOLVER.IMS_PER_BATCH)
+                        except Exception:
+                            _batch = None
+
+                if _batch is None or _batch <= 0:
+                    _batch = 1
                 if num_train_images > 0:
                     iters_per_epoch = math.ceil(num_train_images / _batch)
                     computed_max_iter = args.epochs * iters_per_epoch
