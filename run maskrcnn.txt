@@ -1,0 +1,42 @@
+worker
+
+sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  --memory=80g \
+  --memory-swap=80g \
+  -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
+  -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
+  -v "$(pwd):/workspace" -w /workspace \
+  maskdino-demo:latest \
+  /bin/bash -lc "
+    bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500 \
+    --train-json /workspace/dataset/scale05/train.json \
+    --val-json /workspace/dataset/scale05/val.json \
+    --images-root /workspace/dataset/scale05 \
+    --output output/maskrcnn/scale05 \
+    --epochs 5
+  "
+
+  Host
+
+  sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  --memory=80g \
+  --memory-swap=80g \
+  -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
+  -v "$(pwd):/workspace" -w /workspace \
+  maskdino-demo:latest \
+  /bin/bash -lc "
+    bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500 \
+    --train-json /workspace/dataset/scale05/train.json \
+    --val-json /workspace/dataset/scale05/val.json \
+    --images-root /workspace/dataset/scale05 \
+    --output output/maskrcnn/scale05 \
+    --epochs 5
+  "

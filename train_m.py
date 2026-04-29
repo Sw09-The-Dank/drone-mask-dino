@@ -57,6 +57,7 @@ from maskdino import (
     DetrDatasetMapper,
 )
 import random
+import cv2
 from detectron2.engine import (
     DefaultTrainer,
     default_argument_parser,
@@ -72,6 +73,37 @@ import weakref
 import glob
 
 from detectron2.checkpoint import DetectionCheckpointer
+
+
+class RandomGaussianBlurMapper:
+    """Wraps a dataset mapper and randomly applies a Gaussian blur to the image.
+
+    Args:
+        mapper: Underlying dataset mapper to call first.
+        prob (float): Probability in [0, 1] of applying the blur each sample.
+        sigma_min (float): Minimum sigma for the Gaussian kernel.
+        sigma_max (float): Maximum sigma for the Gaussian kernel.
+    """
+
+    def __init__(self, mapper, prob: float = 0.5, sigma_min: float = 0.5, sigma_max: float = 2.0):
+        self.mapper = mapper
+        self.prob = prob
+        self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
+
+    def __call__(self, dataset_dict):
+        data = self.mapper(dataset_dict)
+        if data is None:
+            return None
+        if random.random() < self.prob:
+            sigma = random.uniform(self.sigma_min, self.sigma_max)
+            img = data["image"]  # C x H x W tensor
+            # Convert to H x W x C numpy array for cv2, apply blur, convert back
+            np_img = img.permute(1, 2, 0).numpy()
+            blurred = cv2.GaussianBlur(np_img, (0, 0), sigmaX=sigma, sigmaY=sigma)
+            data["image"] = torch.from_numpy(blurred).permute(2, 0, 1)
+        return data
+
 
 class AMPCheckpointer(DetectionCheckpointer):
     def __init__(self, model, save_dir="", *, trainer=None, optimizer=None, scheduler=None, scaler=None, **kwargs):
@@ -250,19 +282,17 @@ class Trainer(DefaultTrainer):
     def build_train_loader(cls, cfg):
         if cfg.INPUT.DATASET_MAPPER_NAME == "coco_instance_lsj":
             mapper = COCOInstanceNewBaselineDatasetMapper(cfg, True)
-            return build_detection_train_loader(cfg, mapper=mapper)
         elif cfg.INPUT.DATASET_MAPPER_NAME == "coco_instance_detr":
             mapper = DetrDatasetMapper(cfg, True)
-            return build_detection_train_loader(cfg, mapper=mapper)
         elif cfg.INPUT.DATASET_MAPPER_NAME == "coco_panoptic_lsj":
             mapper = COCOPanopticNewBaselineDatasetMapper(cfg, True)
-            return build_detection_train_loader(cfg, mapper=mapper)
         elif cfg.INPUT.DATASET_MAPPER_NAME == "mask_former_semantic":
             mapper = MaskFormerSemanticDatasetMapper(cfg, True)
-            return build_detection_train_loader(cfg, mapper=mapper)
         else:
             mapper = None
-            return build_detection_train_loader(cfg, mapper=mapper)
+        if mapper is not None:
+            mapper = RandomGaussianBlurMapper(mapper, prob=0.5, sigma_min=0.5, sigma_max=2.0)
+        return build_detection_train_loader(cfg, mapper=mapper)
 
     @classmethod
     def build_lr_scheduler(cls, cfg, optimizer):

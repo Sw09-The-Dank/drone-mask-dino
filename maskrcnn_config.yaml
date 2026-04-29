@@ -92,7 +92,7 @@ INPUT:
   MAX_SIZE_TRAIN: 1024
   MIN_SIZE_TRAIN_SAMPLING: "choice"
   CROP:
-    ENABLED: True
+    ENABLED: False
     TYPE: "absolute"
     SIZE: [1024, 1024]
   MIN_SIZE_TEST: 1024

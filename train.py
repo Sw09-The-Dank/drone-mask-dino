@@ -7,6 +7,10 @@ import subprocess
 import importlib
 import numpy as np
 import torch
+try:
+    import cv2
+except Exception:
+    cv2 = None
 
 try:
     from detectron2.engine import HookBase
@@ -163,6 +167,41 @@ def _choose_default_num_workers(cli_num_workers=None) -> int:
 _configure_torch_runtime()
 
 
+class RandomGaussianBlurMapper:
+    """Wrap a dataset mapper and apply random Gaussian blur to training images."""
+
+    def __init__(self, mapper, prob: float = 0.5, sigma_min: float = 0.5, sigma_max: float = 2.0):
+        self.mapper = mapper
+        self.prob = float(prob)
+        self.sigma_min = float(sigma_min)
+        self.sigma_max = float(sigma_max)
+
+    def __call__(self, dataset_dict):
+        data = self.mapper(dataset_dict)
+        if data is None or cv2 is None:
+            return data
+        if self.prob <= 0.0 or random.random() >= self.prob:
+            return data
+
+        img = data.get("image", None)
+        if img is None or not torch.is_tensor(img) or img.ndim != 3:
+            return data
+
+        # Detectron2 image tensor is CxHxW; OpenCV expects HxWxC.
+        src = img.detach().cpu()
+        np_img = src.permute(1, 2, 0).numpy()
+        sigma = random.uniform(self.sigma_min, self.sigma_max)
+        blurred = cv2.GaussianBlur(np_img, (0, 0), sigmaX=sigma, sigmaY=sigma)
+        if blurred.ndim == 2:
+            blurred = blurred[:, :, None]
+
+        out = torch.from_numpy(blurred).permute(2, 0, 1)
+        if out.dtype != img.dtype:
+            out = out.to(dtype=img.dtype)
+        data["image"] = out.to(device=img.device)
+        return data
+
+
 def setup_ddp_from_env():
     """Initialize torch.distributed and detectron2 local PG from environment.
 
@@ -170,57 +209,61 @@ def setup_ddp_from_env():
     and `LOCAL_WORLD_SIZE` / `LOCAL_SIZE` to determine local process counts.
     """
     try:
-        local_rank = int(os.environ.get('LOCAL_RANK', os.environ.get('LOCAL_RANK', '0')))
+        local_rank = int(os.environ.get('LOCAL_RANK', '0'))
     except Exception:
         local_rank = 0
     try:
-        world_size = int(os.environ.get('WORLD_SIZE', os.environ.get('WORLD_SIZE', '1')))
+        world_size = int(os.environ.get('WORLD_SIZE', '1'))
     except Exception:
         world_size = 1
 
     # set CUDA device for this process
-    try:
-        if torch.cuda.is_available():
-            try:
-                torch.cuda.set_device(local_rank)
-            except Exception:
-                pass
-    except Exception:
-        pass
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.set_device(local_rank)
+        except Exception:
+            pass
+        # Cap GPU memory so the process OOM-crashes instead of stalling
+        try:
+            frac = float(os.environ.get("CUDA_MEMORY_FRACTION", "0.85"))
+            torch.cuda.set_per_process_memory_fraction(frac, local_rank)
+            print(f"[MEM] GPU memory fraction capped at {frac:.0%} for device {local_rank}")
+        except Exception as e:
+            print(f"[MEM] Could not set GPU memory fraction: {e}")
 
     # init torch.distributed if needed
-    try:
-        if torch.distributed.is_available() and not torch.distributed.is_initialized() and world_size > 1:
-            backend = 'nccl' if torch.cuda.is_available() else 'gloo'
-            try:
-                torch.distributed.init_process_group(backend=backend, init_method='env://')
-                rank = int(os.environ.get('RANK', os.environ.get('LOCAL_RANK', '0')))
-                print(f"DDP INIT: backend={backend} RANK={rank} LOCAL_RANK={local_rank} WORLD_SIZE={world_size}")
-            except Exception as e:
-                print(f"[WARN] torch.distributed.init_process_group failed: {e}")
-    except Exception as e:
-        print(f"[WARN] DDP setup problem: {e}")
+    if torch.distributed.is_available() and not torch.distributed.is_initialized() and world_size > 1:
+        backend = 'nccl' if torch.cuda.is_available() else 'gloo'
+        torch.distributed.init_process_group(backend=backend, init_method='env://')
+        rank = int(os.environ.get('RANK', os.environ.get('LOCAL_RANK', '0')))
+        print(f"DDP INIT: backend={backend} RANK={rank} LOCAL_RANK={local_rank} WORLD_SIZE={world_size}")
 
     # Ensure detectron2 local process group exists
-    try:
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        try:
+            from detectron2.utils import comm as d2comm
             try:
-                from detectron2.utils import comm as d2comm
-                try:
-                    n_local = int(os.environ.get('LOCAL_WORLD_SIZE', os.environ.get('LOCAL_SIZE', os.environ.get('NPROC_PER_NODE', '1'))))
-                except Exception:
-                    n_local = 1
-                if n_local < 1:
-                    n_local = 1
-                try:
-                    d2comm.create_local_process_group(n_local)
-                    print(f"Created detectron2 local process group with {n_local} local workers")
-                except Exception as e:
-                    print(f"[WARN] Could not create detectron2 local process group: {e}")
+                local_world_size = int(os.environ.get('LOCAL_WORLD_SIZE', None) or os.environ.get('LOCAL_SIZE', None) or 0)
             except Exception:
-                pass
-    except Exception:
-        pass
+                local_world_size = 0
+            try:
+                global_world_size = int(os.environ.get('WORLD_SIZE', '1'))
+            except Exception:
+                global_world_size = 1
+            # Infer per-node count from visible CUDA devices when not provided
+            if local_world_size <= 0:
+                try:
+                    local_world_size = torch.cuda.device_count() if torch.cuda.is_available() else 1
+                except Exception:
+                    local_world_size = 1
+            should_create = (local_world_size > 1) or (global_world_size > 1)
+            if should_create:
+                print(f"[DDP] creating local process group: local_world_size={local_world_size} global_world_size={global_world_size}")
+                d2comm.create_local_process_group(local_world_size)
+                print("[DDP] detectron2 local process group created")
+        except Exception as e:
+            print(f"[DDP] failed to create detectron2 local process group: {e!r}")
+            raise
 
     # tuning
     try:
@@ -338,7 +381,8 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                         eval_detections_per_image=None,
                         eval_focus_on_box=None,
                         fast_eval=False,
-                        eval_bbox_only=False):
+                        eval_bbox_only=False,
+                        gaussian_blur_prob=0.0):
     _ensure_pkg_resources_available()
     try:
         from detectron2.data.datasets import register_coco_instances
@@ -1229,6 +1273,31 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
             os.makedirs(output_folder, exist_ok=True)
             return COCOEvaluator(dataset_name, tasks=None, distributed=False, output_dir=output_folder)
 
+        @classmethod
+        def build_train_loader(cls, cfg):
+            from detectron2.data import DatasetMapper, build_detection_train_loader
+
+            mapper = DatasetMapper(cfg, is_train=True)
+            blur_prob = float(gaussian_blur_prob)
+            sigma_min = float(os.environ.get("GAUSSIAN_BLUR_SIGMA_MIN", "0.5"))
+            sigma_max = float(os.environ.get("GAUSSIAN_BLUR_SIGMA_MAX", "2.0"))
+
+            if cv2 is not None and blur_prob > 0.0:
+                mapper = RandomGaussianBlurMapper(
+                    mapper,
+                    prob=blur_prob,
+                    sigma_min=sigma_min,
+                    sigma_max=sigma_max,
+                )
+                print(
+                    f"[AUG] Gaussian blur enabled: prob={blur_prob} "
+                    f"sigma=[{sigma_min}, {sigma_max}]"
+                )
+            else:
+                print("[AUG] Gaussian blur disabled (cv2 missing or --gaussian-blur-prob<=0)")
+
+            return build_detection_train_loader(cfg, mapper=mapper)
+
     trainer = DroneTrainer(cfg)
     # resume=True will continue from last checkpoint if present
     try:
@@ -1886,15 +1955,15 @@ if __name__ == "__main__":
     parser.add_argument('--eval-detections-per-image', type=int, default=None, help='override TEST.DETECTIONS_PER_IMAGE to cap per-image predictions during eval')
     parser.add_argument('--eval-focus-on-box', dest='eval_focus_on_box', action='store_true', help='for MaskDINO, focus eval outputs on boxes to reduce mask post-processing cost')
     parser.add_argument('--no-eval-focus-on-box', dest='eval_focus_on_box', action='store_false', help='disable MaskDINO TEST_FOUCUS_ON_BOX override')
+    parser.add_argument('--gaussian-blur-prob', type=float, default=0.0, help='probability of applying random Gaussian blur augmentation during training (0 disables it)')
     parser.set_defaults(eval_focus_on_box=None)
 
     args = parser.parse_args()
 
     # initialize DDP if environment indicates a multi-process run
-    try:
+    is_torchrun = any(k in os.environ for k in ("WORLD_SIZE", "RANK", "LOCAL_RANK"))
+    if is_torchrun:
         setup_ddp_from_env()
-    except Exception:
-        pass
 
     run_default_trainer(
         train_json_path=args.train_json,
@@ -1918,4 +1987,5 @@ if __name__ == "__main__":
         eval_focus_on_box=args.eval_focus_on_box,
         fast_eval=args.fast_eval,
         eval_bbox_only=args.eval_bbox_only,
+        gaussian_blur_prob=args.gaussian_blur_prob,
     )
