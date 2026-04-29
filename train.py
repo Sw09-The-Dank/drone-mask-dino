@@ -267,9 +267,12 @@ def setup_ddp_from_env():
                     local_world_size = 1
             should_create = (local_world_size > 1) or (global_world_size > 1)
             if should_create:
-                print(f"[DDP] creating local process group: local_world_size={local_world_size} global_world_size={global_world_size}")
-                d2comm.create_local_process_group(local_world_size)
-                print("[DDP] detectron2 local process group created")
+                if getattr(d2comm, "_LOCAL_PROCESS_GROUP", None) is None:
+                    print(f"[DDP] creating local process group: local_world_size={local_world_size} global_world_size={global_world_size}")
+                    d2comm.create_local_process_group(local_world_size)
+                    print("[DDP] detectron2 local process group created")
+                else:
+                    print("[DDP] detectron2 local process group already initialized")
         except Exception as e:
             print(f"[DDP] failed to create detectron2 local process group: {e!r}")
             raise
@@ -331,6 +334,49 @@ def finalize_ddp(wait_seconds: float = 3.0):
                 pass
     except Exception:
         pass
+
+
+def _unwrap_train_loader_sampler(loader):
+    """Best-effort extraction of the effective sampler from Detectron2 train loaders."""
+    current = loader
+    fallback = None
+    seen = set()
+
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        sampler = getattr(current, "sampler", None)
+        if sampler is not None:
+            module_name = type(sampler).__module__
+            class_name = type(sampler).__name__
+            if module_name.startswith("detectron2.") or class_name.endswith("TrainingSampler"):
+                return sampler
+            fallback = sampler
+        current = getattr(current, "dataset", None)
+
+    return fallback
+
+
+def _debug_log_train_loader_sampler(loader, prefix="[DEBUG]"):
+    sampler = _unwrap_train_loader_sampler(loader)
+    if sampler is None:
+        print(f"{prefix} Train loader sampler: None")
+        return
+
+    sampler_type = type(sampler).__name__
+    sampler_module = type(sampler).__module__
+    print(f"{prefix} Train loader sampler: {sampler_module}.{sampler_type}")
+
+    if sampler_module.startswith("detectron2.data.samplers") and sampler_type == "TrainingSampler":
+        print(f"{prefix} Train loader uses Detectron2 TrainingSampler: True")
+        print(f"{prefix} TrainingSampler is distributed-aware: rank gets indices[rank::world_size]")
+        return
+
+    try:
+        from torch.utils.data.distributed import DistributedSampler as _DS
+        is_dist_sampler = isinstance(sampler, _DS)
+        print(f"{prefix} Train loader uses DistributedSampler: {is_dist_sampler}")
+    except Exception:
+        print(f"{prefix} Could not determine if sampler is distributed-aware")
 
 
 
@@ -1306,21 +1352,12 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
             else:
                 print("[AUG] Gaussian blur disabled (cv2 missing or --gaussian-blur-prob<=0)")
 
-            # Ensure DistributedSampler is used in DDP context
-            # by default, build_detection_train_loader should do this, but explicitly check
             loader = build_detection_train_loader(cfg, mapper=mapper)
-            
-            # Debug: verify DistributedSampler is being used
-            sampler = getattr(loader, 'sampler', None)
+
             world_size = comm.get_world_size()
             if world_size > 1:
-                from torch.utils.data.distributed import DistributedSampler as _DS
-                is_dist = isinstance(sampler, _DS)
-                if not is_dist:
-                    print(f"[WARN] DistributedSampler not detected! Sampler type: {type(sampler).__name__ if sampler else 'None'}")
-                else:
-                    print(f"[OK] Using DistributedSampler (rank={comm.get_rank()}, world_size={world_size})")
-            
+                _debug_log_train_loader_sampler(loader, prefix="[DEBUG]")
+
             return loader
 
     trainer = DroneTrainer(cfg)
@@ -1376,14 +1413,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     try:
         from detectron2.data import build_detection_train_loader
         tmp_loader = build_detection_train_loader(cfg)
-        sampler = getattr(tmp_loader, 'sampler', None)
-        print(f"[DEBUG] Train loader sampler: {type(sampler).__name__ if sampler is not None else 'None'}")
-        try:
-            from torch.utils.data.distributed import DistributedSampler as _DS
-            is_dist_sampler = isinstance(sampler, _DS)
-            print(f"[DEBUG] Train loader uses DistributedSampler: {is_dist_sampler}")
-        except Exception:
-            print("[DEBUG] Could not determine if sampler is DistributedSampler")
+        _debug_log_train_loader_sampler(tmp_loader, prefix="[DEBUG]")
     except Exception as e:
         print(f"[WARN] Could not build/inspect train loader: {e}")
 
