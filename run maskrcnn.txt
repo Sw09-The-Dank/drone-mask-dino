@@ -17,7 +17,9 @@ sudo docker run --gpus all --rm -it \
     --val-json /workspace/dataset/scale05/val.json \
     --images-root /workspace/dataset/scale05 \
     --output output/maskrcnn/scale05 \
-    --epochs 5
+    --config-file maskrcnn_config_25ep.yaml \
+    --epochs 25 \
+    --no-resume
   "
 
   Host
@@ -38,5 +40,7 @@ sudo docker run --gpus all --rm -it \
     --val-json /workspace/dataset/scale05/val.json \
     --images-root /workspace/dataset/scale05 \
     --output output/maskrcnn/scale05 \
-    --epochs 5
+    --config-file maskrcnn_config_25ep.yaml \
+    --epochs 25 \
+    --no-resume
   "

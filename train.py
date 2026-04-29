@@ -1394,6 +1394,31 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
             trainer.resume_or_load(resume=False)
         else:
             raise
+
+    # Log explicit resume state to make optimizer/scheduler restoration obvious in logs.
+    try:
+        start_iter = int(getattr(trainer, "start_iter", 0))
+        max_iter_now = int(getattr(trainer, "max_iter", cfg.SOLVER.MAX_ITER))
+        print(f"[RESUME] trainer.start_iter={start_iter} max_iter={max_iter_now}")
+
+        opt = getattr(trainer, "optimizer", None)
+        if opt is not None and getattr(opt, "param_groups", None):
+            lrs = []
+            for pg in opt.param_groups:
+                try:
+                    lrs.append(float(pg.get("lr", float("nan"))))
+                except Exception:
+                    pass
+            if lrs:
+                lr_min = min(lrs)
+                lr_max = max(lrs)
+                print(f"[RESUME] optimizer lr range: min={lr_min:.8f}, max={lr_max:.8f}")
+
+        if bool(resume) and start_iter <= 0:
+            print("[RESUME][WARN] start_iter is 0 while resume=True (likely weights-only load)")
+    except Exception as e:
+        print(f"[RESUME][WARN] Could not inspect resume state: {e}")
+
     # --- DDP & data-loader sanity checks (help debug multi-node behavior) ---
     try:
         print("[DEBUG] torch.distributed available:", torch.distributed.is_available())
