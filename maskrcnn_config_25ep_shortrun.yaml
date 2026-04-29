@@ -1,0 +1,90 @@
+# Short-run focused Mask R-CNN config for ~25 epochs.
+# Use with: --epochs 25
+# train.py recomputes MAX_ITER from epochs, so LR schedule is tuned for ~2000 iters.
+
+VERSION: 2
+
+MODEL:
+  META_ARCHITECTURE: "GeneralizedRCNN"
+  WEIGHTS: "https://dl.fbaipublicfiles.com/detectron2/new_baselines/mask_rcnn_R_50_FPN_400ep_LSJ/42019571/model_final_14d201.pkl"
+  MASK_ON: True
+  BACKBONE:
+    NAME: "build_resnet_fpn_backbone"
+    FREEZE_AT: 0
+  RESNETS:
+    DEPTH: 50
+    OUT_FEATURES: ["res2", "res3", "res4", "res5"]
+    NORM: "SyncBN"
+  FPN:
+    IN_FEATURES: ["res2", "res3", "res4", "res5"]
+    NORM: "SyncBN"
+  ANCHOR_GENERATOR:
+    SIZES: [[32], [64], [128], [256], [512]]
+    ASPECT_RATIOS: [[0.5, 1.0, 2.0]]
+  RPN:
+    IN_FEATURES: ["p2", "p3", "p4", "p5", "p6"]
+    CONV_DIMS: [-1, -1]
+    PRE_NMS_TOPK_TRAIN: 2000
+    POST_NMS_TOPK_TRAIN: 1000
+    PRE_NMS_TOPK_TEST: 1000
+    POST_NMS_TOPK_TEST: 1000
+    NMS_THRESH: 0.7
+  ROI_HEADS:
+    NAME: "StandardROIHeads"
+    IN_FEATURES: ["p2", "p3", "p4", "p5"]
+    BATCH_SIZE_PER_IMAGE: 256
+    NUM_CLASSES: 8
+    SCORE_THRESH_TEST: 0.05
+    NMS_THRESH_TEST: 0.5
+  ROI_BOX_HEAD:
+    NAME: "FastRCNNConvFCHead"
+    NUM_CONV: 4
+    NUM_FC: 1
+    NORM: "SyncBN"
+    POOLER_RESOLUTION: 7
+  ROI_MASK_HEAD:
+    NAME: "MaskRCNNConvUpsampleHead"
+    NUM_CONV: 4
+    NORM: "SyncBN"
+    POOLER_RESOLUTION: 14
+
+DATASETS:
+  TRAIN:
+    - drone_train_polygons
+  TEST:
+    - drone_val_polygons
+
+DATALOADER:
+  NUM_WORKERS: 4
+  SAMPLER_TRAIN: TrainingSampler
+
+SOLVER:
+  IMS_PER_BATCH: 48
+  BASE_LR: 0.06
+  MAX_ITER: 2000
+  WARMUP_ITERS: 150
+  WARMUP_FACTOR: 0.001
+  STEPS: [1400, 1800]
+  GAMMA: 0.1
+  WEIGHT_DECAY: 0.00004
+  MOMENTUM: 0.9
+  CHECKPOINT_PERIOD: 250
+  CLIP_GRADIENTS:
+    ENABLED: True
+    CLIP_TYPE: "norm"
+    CLIP_VALUE: 1.0
+
+TEST:
+  EVAL_PERIOD: 250
+  DETECTIONS_PER_IMAGE: 100
+
+INPUT:
+  MIN_SIZE_TRAIN: [1024]
+  MAX_SIZE_TRAIN: 1024
+  MIN_SIZE_TRAIN_SAMPLING: "choice"
+  CROP:
+    ENABLED: False
+    TYPE: "absolute"
+    SIZE: [1024, 1024]
+  MIN_SIZE_TEST: 1024
+  MAX_SIZE_TEST: 1024

@@ -13,11 +13,11 @@ sudo docker run --gpus all --rm -it \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500 \
-    --train-json /workspace/dataset/scale05/train.json \
-    --val-json /workspace/dataset/scale05/val.json \
-    --images-root /workspace/dataset/scale05 \
-    --output output/maskrcnn/scale05 \
-    --config-file maskrcnn_config_25ep.yaml \
+    --train-json /workspace/dataset/scale1/train.json \
+    --val-json /workspace/dataset/scale1/val.json \
+    --images-root /workspace/dataset/scale1 \
+    --output output/maskrcnn/scale1 \
+    --config-file maskrcnn_config_25ep_shortrun.yaml \
     --epochs 25 \
     --no-resume
   "
@@ -36,11 +36,11 @@ sudo docker run --gpus all --rm -it \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500 \
-    --train-json /workspace/dataset/scale05/train.json \
-    --val-json /workspace/dataset/scale05/val.json \
-    --images-root /workspace/dataset/scale05 \
-    --output output/maskrcnn/scale05 \
-    --config-file maskrcnn_config_25ep.yaml \
+    --train-json /workspace/dataset/scale1/train.json \
+    --val-json /workspace/dataset/scale1/val.json \
+    --images-root /workspace/dataset/scale1 \
+    --output output/maskrcnn/scale1 \
+    --config-file maskrcnn_config_25ep_shortrun.yaml \
     --epochs 25 \
     --no-resume
   "
