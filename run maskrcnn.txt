@@ -6,7 +6,7 @@ sudo docker run --gpus all --rm -it \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   --memory=90g \
-  --memory-swap=2g \
+  --memory-swap=90g \
   -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
   -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
   -v "$(pwd):/workspace" -w /workspace \
@@ -29,7 +29,7 @@ sudo docker run --gpus all --rm -it \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   --memory=90g \
-  --memory-swap=2g \
+  --memory-swap=90g \
   -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
   -v "$(pwd):/workspace" -w /workspace \
   maskdino-demo:latest \
