@@ -989,17 +989,28 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
      # Apply optional config/weight overrides provided by caller (CLI or function args)
     try:
         if config_file:
+            _cfg_loaded = False
+            _cfg_errors = []
             try:
                 cfg.merge_from_file(config_file)
                 print(f"[INFO] Merged config file: {config_file}")
-            except Exception:
+                _cfg_loaded = True
+            except Exception as e:
+                _cfg_errors.append(f"direct merge failed: {e}")
+            if not _cfg_loaded:
                 try:
                     # maybe a short detectron2 config key under detectron2/configs
                     resolved_cfg = _resolve_detectron2_cfg_file(config_file)
                     cfg.merge_from_file(resolved_cfg)
                     print(f"[INFO] Merged detectron2 config key: {config_file} -> {resolved_cfg}")
-                except Exception:
-                    print(f"[WARN] Could not load config file: {config_file}")
+                    _cfg_loaded = True
+                except Exception as e:
+                    _cfg_errors.append(f"detectron2 key resolve failed: {e}")
+            if not _cfg_loaded:
+                print(f"[ERROR] Could not load config file: {config_file}")
+                for _err in _cfg_errors:
+                    print(f"[ERROR]   {_err}")
+                raise SystemExit(2)
         if weights:
             cfg.MODEL.WEIGHTS = weights
             print(f"[INFO] Set MODEL.WEIGHTS = {weights}")
