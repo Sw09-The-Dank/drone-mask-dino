@@ -1,0 +1,30 @@
+# Detectron2 Mask R-CNN R50-FPN 1x adapted for this project.
+# Designed for a 25-epoch run with larger memory usage.
+#
+# Schedule scaling notes:
+# - 1x baseline ratios: STEPS=(60000, 80000), MAX_ITER=90000
+#   -> step ratios are 0.6667 and 0.8889 of MAX_ITER.
+# - For scale05 (~3712 images) with IMS_PER_BATCH=32:
+#   iters/epoch = ceil(3712/32) = 116
+#   MAX_ITER = 25 * 116 = 2900
+#   STEPS ~= (1933, 2578)
+
+_BASE_: "detectron2/configs/COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_1x.yaml"
+
+MODEL:
+  ROI_HEADS:
+    BATCH_SIZE_PER_IMAGE: 512
+
+DATALOADER:
+  NUM_WORKERS: 8
+
+SOLVER:
+  IMS_PER_BATCH: 32
+  BASE_LR: 0.03
+  MAX_ITER: 2900
+  STEPS: (1933, 2578)
+  WARMUP_ITERS: 100
+  CHECKPOINT_PERIOD: 200
+
+TEST:
+  EVAL_PERIOD: 200

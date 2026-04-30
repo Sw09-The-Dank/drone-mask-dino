@@ -5,20 +5,19 @@ sudo docker run --gpus all --rm -it \
   --ipc=host \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
-  --memory=80g \
-  --memory-swap=80g \
+  --memory=90g \
+  --memory-swap=2g \
   -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
   -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
   -v "$(pwd):/workspace" -w /workspace \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500 \
-    --train-json /workspace/dataset/scale1/train.json \
-    --val-json /workspace/dataset/scale1/val.json \
-    --images-root /workspace/dataset/scale1 \
-    --output output/maskrcnn/scale1 \
-    --config-file maskrcnn_config_25ep_shortrun.yaml \
-    --epochs 25 \
+    --train-json /workspace/dataset/scale05/train.json \
+    --val-json /workspace/dataset/scale05/val.json \
+    --images-root /workspace/dataset/scale05 \
+    --output output/maskrcnn/scale05 \
+    --config-file maskrcnn_r50_fpn_1x_25ep_scale05.yaml \
     --no-resume
   "
 
@@ -29,18 +28,17 @@ sudo docker run --gpus all --rm -it \
   --ipc=host \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
-  --memory=80g \
-  --memory-swap=80g \
+  --memory=90g \
+  --memory-swap=2g \
   -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
   -v "$(pwd):/workspace" -w /workspace \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500 \
-    --train-json /workspace/dataset/scale1/train.json \
-    --val-json /workspace/dataset/scale1/val.json \
-    --images-root /workspace/dataset/scale1 \
-    --output output/maskrcnn/scale1 \
-    --config-file maskrcnn_config_25ep_shortrun.yaml \
-    --epochs 25 \
+    --train-json /workspace/dataset/scale05/train.json \
+    --val-json /workspace/dataset/scale05/val.json \
+    --images-root /workspace/dataset/scale05 \
+    --output output/maskrcnn/scale05 \
+    --config-file maskrcnn_r50_fpn_1x_25ep_scale05.yaml \
     --no-resume
   "
