@@ -1369,7 +1369,7 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
             if output_folder is None:
                 output_folder = os.path.join(cfg.OUTPUT_DIR, "inference")
             os.makedirs(output_folder, exist_ok=True)
-            return COCOEvaluator(dataset_name, tasks=None, distributed=False, output_dir=output_folder)
+            return COCOEvaluator(dataset_name, tasks=None, distributed=True, output_dir=output_folder)
 
         @classmethod
         def build_train_loader(cls, cfg):
