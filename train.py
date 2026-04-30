@@ -413,6 +413,38 @@ class CheckpointCleanupHook(HookBase):
                 print(f"Failed to delete {ckpt}: {e}")
 
 
+class RankStepTimeHook(HookBase):
+    """Lightweight per-rank step-time logger to spot DDP stragglers."""
+    def __init__(self, period=100, warmup=20):
+        self.period = int(period)
+        self.warmup = int(warmup)
+        self._step_t0 = None
+
+    def before_step(self):
+        self._step_t0 = time.perf_counter()
+
+    def after_step(self):
+        if self._step_t0 is None:
+            return
+
+        it = int(self.trainer.iter + 1)
+        if it <= self.warmup or (it % self.period) != 0:
+            return
+
+        dt = time.perf_counter() - self._step_t0
+
+        rank = 0
+        world = 1
+        try:
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                rank = int(torch.distributed.get_rank())
+                world = int(torch.distributed.get_world_size())
+        except Exception:
+            pass
+
+        print(f"[TIMING][rank {rank}/{world}] iter={it} step_time={dt:.4f}s")
+
+
 print("\n--- TRAINER DEFINITION ---")
 # print_cuda_mem("before TrainerWithDebug instantiation")
 
@@ -1463,7 +1495,10 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     # Register checkpoint cleanup hook (runs every CHECKPOINT_PERIOD steps, keeps last N checkpoints)
     try:
         _ckpt_period = getattr(cfg.SOLVER, 'CHECKPOINT_PERIOD', 100)
-        trainer.register_hooks([CheckpointCleanupHook(cfg.OUTPUT_DIR, keep=4, period=_ckpt_period)])
+        trainer.register_hooks([
+            RankStepTimeHook(period=100, warmup=20),
+            CheckpointCleanupHook(cfg.OUTPUT_DIR, keep=4, period=_ckpt_period),
+        ])
     except Exception as e:
         print(f"[WARN] Could not register CheckpointCleanupHook: {e}")
 
