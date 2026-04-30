@@ -290,8 +290,16 @@ class Trainer(DefaultTrainer):
             mapper = MaskFormerSemanticDatasetMapper(cfg, True)
         else:
             mapper = None
-        if mapper is not None:
-            mapper = RandomGaussianBlurMapper(mapper, prob=0.5, sigma_min=0.5, sigma_max=2.0)
+        blur_prob = float(os.environ.get("GAUSSIAN_BLUR_PROB", "0.0"))
+        sigma_min = float(os.environ.get("GAUSSIAN_BLUR_SIGMA_MIN", "0.5"))
+        sigma_max = float(os.environ.get("GAUSSIAN_BLUR_SIGMA_MAX", "2.0"))
+
+        if mapper is not None and cv2 is not None and blur_prob > 0.0:
+            mapper = RandomGaussianBlurMapper(mapper, prob=blur_prob, sigma_min=sigma_min, sigma_max=sigma_max)
+            if comm.is_main_process():
+                print(f"[AUG] Gaussian blur enabled: prob={blur_prob} sigma=[{sigma_min}, {sigma_max}]")
+        elif mapper is not None and comm.is_main_process():
+            print("[AUG] Gaussian blur disabled (cv2 missing or --gaussian-blur-prob<=0)")
         return build_detection_train_loader(cfg, mapper=mapper)
 
     @classmethod
@@ -838,7 +846,17 @@ if __name__ == "__main__":
     parser.add_argument('--output', default='/workspace/output')
     parser.add_argument('--eval-num-images', type=int, default=None,
                         help='If set, restrict evaluation to this many images by creating a temporary subset COCO json for DATASETS.TEST')
+    parser.add_argument('--gaussian-blur-prob', type=float, default=0.0,
+                        help='probability of applying random Gaussian blur augmentation during training (0 disables it)')
+    parser.add_argument('--gaussian-blur-sigma-min', type=float, default=0.5,
+                        help='minimum sigma for Gaussian blur augmentation')
+    parser.add_argument('--gaussian-blur-sigma-max', type=float, default=2.0,
+                        help='maximum sigma for Gaussian blur augmentation')
     args = parser.parse_args()
+
+    os.environ["GAUSSIAN_BLUR_PROB"] = str(float(args.gaussian_blur_prob))
+    os.environ["GAUSSIAN_BLUR_SIGMA_MIN"] = str(float(args.gaussian_blur_sigma_min))
+    os.environ["GAUSSIAN_BLUR_SIGMA_MAX"] = str(float(args.gaussian_blur_sigma_max))
 
     def _dir_has_any_file(path):
         if not path or not os.path.isdir(path):
