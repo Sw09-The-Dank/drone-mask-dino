@@ -26,6 +26,7 @@ NNODES="1"
 USE_GPU="1"
 NCCL_IFNAME=""
 MEMORY="90g"
+USE_SUDO_DOCKER="0"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
@@ -48,6 +49,7 @@ Optional:
   --nnodes <n>             Number of nodes for launch_ddp.sh. Default: 1
   --nccl-ifname <name>     Optional NCCL_SOCKET_IFNAME value.
   --memory <size>          Docker memory/memory-swap. Default: 90g
+  --sudo-docker            Run docker commands via sudo.
   --cpu-only               Disable --gpus all.
   -h, --help               Show this help.
 EOF
@@ -94,6 +96,10 @@ while [[ $# -gt 0 ]]; do
     --memory)
       MEMORY="${2:-}"
       shift 2
+      ;;
+    --sudo-docker)
+      USE_SUDO_DOCKER="1"
+      shift
       ;;
     --cpu-only)
       USE_GPU="0"
@@ -164,6 +170,24 @@ if [[ ! -f "$REPO_ROOT/$CONFIG_FILE" ]]; then
   exit 1
 fi
 
+DOCKER_BIN=(docker)
+if [[ "$USE_SUDO_DOCKER" == "1" ]]; then
+  DOCKER_BIN=(sudo docker)
+fi
+
+if ! "${DOCKER_BIN[@]}" info >/dev/null 2>&1; then
+  if [[ "$USE_SUDO_DOCKER" == "0" ]] && command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+    echo "Docker requires elevated permissions. Auto-switching to sudo docker."
+    DOCKER_BIN=(sudo docker)
+  else
+    echo "Cannot access Docker daemon." >&2
+    echo "Try one of:" >&2
+    echo "  1) rerun with --sudo-docker" >&2
+    echo "  2) add your user to docker group and re-login" >&2
+    exit 1
+  fi
+fi
+
 for variant_path in "${variants[@]}"; do
   variant_name="$(basename "$variant_path")"
 
@@ -213,7 +237,7 @@ for variant_path in "${variants[@]}"; do
     )
   fi
 
-  docker "${docker_args[@]}" \
+  "${DOCKER_BIN[@]}" "${docker_args[@]}" \
     "${extra_env[@]}" \
     "$IMAGE" \
     /bin/bash -lc "
