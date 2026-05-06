@@ -21,13 +21,14 @@ MASTER_PORT="29500"
 AB_DIR=""
 IMAGE="maskdino-demo:latest"
 CONFIG_FILE="maskrcnn_r50_fpn_1x_25ep_scale.yaml"
-NPROC_PER_NODE="2"
-NNODES="1"
+NPROC_PER_NODE="1"
+NNODES="2"
 USE_GPU="1"
 NCCL_IFNAME=""
 MEMORY="90g"
 USE_SUDO_DOCKER="0"
 SSH_HOST_USER=""
+DISABLE_PERIODIC_EVAL="1"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
@@ -46,14 +47,17 @@ Optional:
   --master-port <port>     Default: 29500
   --image <name>           Docker image. Default: maskdino-demo:latest
   --config-file <path>     Config file inside workspace. Default: maskrcnn_r50_fpn_1x_25ep_scale.yaml
-  --nproc-per-node <n>     GPUs per node for launch_ddp.sh. Default: 2
-  --nnodes <n>             Number of nodes for launch_ddp.sh. Default: 1
+  --nproc-per-node <n>     GPUs per node for launch_ddp.sh. Default: 1
+  --nnodes <n>             Number of nodes for launch_ddp.sh. Default: 2
   --nccl-ifname <name>     Optional NCCL_SOCKET_IFNAME value.
   --memory <size>          Docker memory/memory-swap. Default: 90g
   --sudo-docker            Run docker commands via sudo.
   --ssh-host-user <user>   SSH user for master node (worker only). Used to check
                            if a variant is already done on the host before running.
                            Example: --ssh-host-user spark1gm
+  --keep-periodic-eval     Keep Detectron2 TEST.EVAL_PERIOD during training.
+                           Default behavior disables periodic eval for ablation runs
+                           and relies on post-run artifacts/checkpoints instead.
   --cpu-only               Disable --gpus all.
   -h, --help               Show this help.
 EOF
@@ -108,6 +112,10 @@ while [[ $# -gt 0 ]]; do
     --ssh-host-user)
       SSH_HOST_USER="${2:-}"
       shift 2
+      ;;
+    --keep-periodic-eval)
+      DISABLE_PERIODIC_EVAL="0"
+      shift
       ;;
     --cpu-only)
       USE_GPU="0"
@@ -243,6 +251,10 @@ for variant_path in "${variants[@]}"; do
   val_json="${CONTAINER_AB_DIR}/${variant_name}/val.json"
   images_root="${CONTAINER_AB_DIR}/${variant_name}"
   output_dir="output/maskrcnn/${variant_name}"
+  train_args=()
+  if [[ "$DISABLE_PERIODIC_EVAL" == "1" ]]; then
+    train_args+=("-s" "TEST.EVAL_PERIOD=0")
+  fi
 
   echo "============================================================"
   echo "[$(date '+%F %T')] Running variant: ${variant_name}"
@@ -250,6 +262,9 @@ for variant_path in "${variants[@]}"; do
   echo "val_json=${val_json}"
   echo "images_root=${images_root}"
   echo "output=${output_dir}"
+  if [[ "$DISABLE_PERIODIC_EVAL" == "1" ]]; then
+    echo "periodic_eval=disabled"
+  fi
 
   extra_env=()
   if [[ -n "$NCCL_IFNAME" ]]; then
@@ -284,12 +299,13 @@ for variant_path in "${variants[@]}"; do
     "${extra_env[@]}" \
     "$IMAGE" \
     /bin/bash -lc "
-      bash ./scripts/launch_ddp.sh ${NPROC_PER_NODE} ${NNODES} ${NODE_RANK} ${MASTER_ADDR} ${MASTER_PORT} \
+      bash ./scripts/launch_ddp.sh ${NNODES} ${NPROC_PER_NODE} ${NODE_RANK} ${MASTER_ADDR} ${MASTER_PORT} \
       --train-json ${train_json} \
       --val-json ${val_json} \
       --images-root ${images_root} \
       --output ${output_dir} \
       --config-file ${CONFIG_FILE} \
+      ${train_args[*]} \
       --no-resume
     "
 done
