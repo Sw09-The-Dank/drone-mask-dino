@@ -196,6 +196,23 @@ if ! "${DOCKER_BIN[@]}" info >/dev/null 2>&1; then
   fi
 fi
 
+SUDO_KEEPALIVE_PID=""
+if [[ "${DOCKER_BIN[0]}" == "sudo" ]]; then
+  echo "Authenticating sudo once for the full run..."
+  sudo -v
+
+  # Keep sudo ticket fresh so each variant run does not reprompt.
+  ( while true; do sudo -n true; sleep 50; done ) &
+  SUDO_KEEPALIVE_PID="$!"
+
+  cleanup() {
+    if [[ -n "$SUDO_KEEPALIVE_PID" ]]; then
+      kill "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true
+    fi
+  }
+  trap cleanup EXIT
+fi
+
 for variant_path in "${variants[@]}"; do
   variant_name="$(basename "$variant_path")"
 
