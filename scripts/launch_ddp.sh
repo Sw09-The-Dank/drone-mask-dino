@@ -72,4 +72,3 @@ python -m torch.distributed.run \
   train.py "${EXTRA_ARGS[@]}"
 
 echo "DDP launcher exited with status $?"
-s

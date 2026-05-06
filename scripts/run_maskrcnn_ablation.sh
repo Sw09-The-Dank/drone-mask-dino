@@ -196,6 +196,11 @@ for variant_path in "${variants[@]}"; do
     continue
   fi
 
+  if [[ -f "$REPO_ROOT/output/maskrcnn/${variant_name}/model_final.pth" ]]; then
+    echo "[$(date '+%F %T')] Skipping ${variant_name}: model_final.pth already exists."
+    continue
+  fi
+
   train_json="${CONTAINER_AB_DIR}/${variant_name}/train.json"
   val_json="${CONTAINER_AB_DIR}/${variant_name}/val.json"
   images_root="${CONTAINER_AB_DIR}/${variant_name}"
