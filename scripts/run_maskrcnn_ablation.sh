@@ -27,6 +27,7 @@ USE_GPU="1"
 NCCL_IFNAME=""
 MEMORY="90g"
 USE_SUDO_DOCKER="0"
+SSH_HOST_USER=""
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
@@ -50,6 +51,9 @@ Optional:
   --nccl-ifname <name>     Optional NCCL_SOCKET_IFNAME value.
   --memory <size>          Docker memory/memory-swap. Default: 90g
   --sudo-docker            Run docker commands via sudo.
+  --ssh-host-user <user>   SSH user for master node (worker only). Used to check
+                           if a variant is already done on the host before running.
+                           Example: --ssh-host-user spark1gm
   --cpu-only               Disable --gpus all.
   -h, --help               Show this help.
 EOF
@@ -100,6 +104,10 @@ while [[ $# -gt 0 ]]; do
     --sudo-docker)
       USE_SUDO_DOCKER="1"
       shift
+      ;;
+    --ssh-host-user)
+      SSH_HOST_USER="${2:-}"
+      shift 2
       ;;
     --cpu-only)
       USE_GPU="0"
@@ -196,7 +204,17 @@ for variant_path in "${variants[@]}"; do
     continue
   fi
 
-  if [[ -f "$REPO_ROOT/output/maskrcnn/${variant_name}/model_final.pth" ]]; then
+  already_done=0
+  if [[ "$ROLE" == "worker" && -n "$SSH_HOST_USER" ]]; then
+    if ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_HOST_USER}@${MASTER_ADDR}" \
+         "test -f \"${REPO_ROOT}/output/maskrcnn/${variant_name}/model_final.pth\"" 2>/dev/null; then
+      already_done=1
+    fi
+  elif [[ -f "$REPO_ROOT/output/maskrcnn/${variant_name}/model_final.pth" ]]; then
+    already_done=1
+  fi
+
+  if [[ "$already_done" == "1" ]]; then
     echo "[$(date '+%F %T')] Skipping ${variant_name}: model_final.pth already exists."
     continue
   fi

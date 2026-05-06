@@ -1,0 +1,6 @@
+Host:
+bash scripts/run_maskrcnn_ablation.sh --role host --master-addr 169.254.18.231 --ablation-dir ./dataset/ablation --nccl-ifname enp1s0f1np1 --sudo-docker
+
+
+Worker:
+bash scripts/run_maskrcnn_ablation.sh --role worker --master-addr 169.254.18.231 --ablation-dir ./dataset/ablation --nccl-ifname enp1s0f0np0 --sudo-docker
