@@ -206,8 +206,11 @@ for variant_path in "${variants[@]}"; do
 
   already_done=0
   if [[ "$ROLE" == "worker" && -n "$SSH_HOST_USER" ]]; then
+    # Strip local $HOME prefix so the path expands correctly under the remote user's home
+    repo_rel_home="${REPO_ROOT_ABS#"${HOME}/"}"
+    remote_check="~/${repo_rel_home}/output/maskrcnn/${variant_name}/model_final.pth"
     if ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_HOST_USER}@${MASTER_ADDR}" \
-         "test -f \"${REPO_ROOT}/output/maskrcnn/${variant_name}/model_final.pth\"" 2>/dev/null; then
+         "test -f ${remote_check}" 2>/dev/null; then
       already_done=1
     fi
   elif [[ -f "$REPO_ROOT/output/maskrcnn/${variant_name}/model_final.pth" ]]; then
