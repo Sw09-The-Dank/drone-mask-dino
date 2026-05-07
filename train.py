@@ -1404,6 +1404,25 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
             return loader
 
     trainer = DroneTrainer(cfg)
+
+    # When EVAL_PERIOD<=0, disable Detectron2 EvalHook entirely.
+    # EvalHook can still run once at after_train, which is undesirable for
+    # long ablation runs and can trigger distributed CUDA inference failures.
+    try:
+        eval_period_cfg = int(getattr(cfg.TEST, 'EVAL_PERIOD', 0) or 0)
+    except Exception:
+        eval_period_cfg = 0
+    if eval_period_cfg <= 0:
+        try:
+            before_hooks = len(getattr(trainer, '_hooks', []))
+            trainer._hooks = [h for h in trainer._hooks if type(h).__name__ != 'EvalHook']
+            after_hooks = len(getattr(trainer, '_hooks', []))
+            removed = before_hooks - after_hooks
+            if removed > 0:
+                print(f"[INFO] Removed {removed} EvalHook(s) because TEST.EVAL_PERIOD={eval_period_cfg}")
+        except Exception as e:
+            print(f"[WARN] Could not remove EvalHook when TEST.EVAL_PERIOD<=0: {e}")
+
     # resume=True will continue from last checkpoint if present
     try:
         if bool(resume):
@@ -1520,26 +1539,24 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     is_main = (rank == 0)
 
     RUN_EVALUATION = True  # Set to True to run evaluation after training
-    # Avoid a second distributed eval pass here: trainer already runs eval hooks.
-    # Running this block on rank 0 only while world_size>1 can stall on collectives.
-    if RUN_EVALUATION and is_distributed:
-        if is_main:
-            print("[INFO] Skipping custom post-train evaluation in distributed mode (avoids duplicate eval + rank mismatch timeout)")
-    # Run optional extra evaluation only for single-process runs.
-    elif RUN_EVALUATION and is_main:
+    # Run post-train eval on all ranks. In distributed runs we avoid the DDP
+    # forward wrapper by evaluating the underlying module directly.
+    if RUN_EVALUATION:
         try:
             from detectron2.evaluation import COCOEvaluator, inference_on_dataset
             from detectron2.data import build_detection_test_loader
             eval_tasks = ("bbox",) if bool(eval_bbox_only) else None
             if eval_tasks is not None:
                 print("[INFO] Evaluation tasks set to bbox-only for faster validation")
+            if is_distributed:
+                print(f"[INFO] Running distributed post-train evaluation on rank {rank}")
             _eval_out = os.path.join(cfg.OUTPUT_DIR, "inference")
             try:
                 # detectron2>=0.6 signature: COCOEvaluator(dataset_name, tasks=None, ...)
                 evaluator = COCOEvaluator(
                     val_dataset_name,
                     tasks=eval_tasks,
-                    distributed=False,
+                    distributed=bool(is_distributed),
                     output_dir=_eval_out,
                 )
             except TypeError:
@@ -1547,13 +1564,19 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                 evaluator = COCOEvaluator(
                     val_dataset_name,
                     cfg,
-                    distributed=False,
+                    distributed=bool(is_distributed),
                     output_dir=_eval_out,
                     tasks=eval_tasks,
                 )
             val_loader = build_detection_test_loader(cfg, val_dataset_name)
-            results = inference_on_dataset(trainer.model, val_loader, evaluator)
-            print(f"[INFO] Evaluation results: {results}")
+
+            eval_model = trainer.model
+            if isinstance(eval_model, torch.nn.parallel.DistributedDataParallel):
+                eval_model = eval_model.module
+
+            results = inference_on_dataset(eval_model, val_loader, evaluator)
+            if is_main:
+                print(f"[INFO] Evaluation results: {results}")
         except Exception as e:
             print("[WARN] Evaluation step failed or unavailable:", e)
 
