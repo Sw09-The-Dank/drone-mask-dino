@@ -1405,24 +1405,82 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
 
     trainer = DroneTrainer(cfg)
 
-    # When resuming, remove the distributed EvalHook so eval runs on rank 0 only
-    # (see post-train eval block below).  On a fresh run (resume=False) both nodes
-    # always start at iter 0 and run the same number of gradient steps, so
-    # distributed eval via EvalHook is safe.  On a resume run the nodes may have
-    # different local checkpoints → different start_iter → different step counts →
-    # NCCL collective payload mismatch → SIGABRT.  Removing EvalHook here and
-    # falling back to the rank-0-only post-train eval block avoids that entirely.
-    if bool(resume):
+    # --- Sync checkpoint from rank 0 to all worker ranks before resume ---
+    #
+    # Each node mounts its own LOCAL disk at $(pwd), so a checkpoint written by
+    # rank 0 (spark02) is invisible to rank 1 (spark01).  Without this sync,
+    # the two ranks load different start_iter values, run a different number of
+    # gradient ALLREDUCEs before the training loop exits, and NCCL crashes with
+    # "message truncated" / SIGABRT.
+    #
+    # Fix: rank 0 reads its checkpoint file and broadcasts the raw bytes to every
+    # other rank via a CUDA NCCL broadcast.  Workers write the file to their local
+    # OUTPUT_DIR and update their last_checkpoint file, so resume_or_load() on
+    # every rank then loads the exact same weights and the same start_iter.
+    if bool(resume) and torch.distributed.is_available() and torch.distributed.is_initialized():
         try:
-            before_hooks = len(getattr(trainer, '_hooks', []))
-            trainer._hooks = [h for h in trainer._hooks if type(h).__name__ != 'EvalHook']
-            after_hooks = len(getattr(trainer, '_hooks', []))
-            removed = before_hooks - after_hooks
-            if removed > 0:
-                print(f"[INFO] resume=True: removed {removed} distributed EvalHook(s); "
-                      "eval will run on rank 0 only after training")
-        except Exception as e:
-            print(f"[WARN] Could not remove EvalHook on resume: {e}")
+            _sync_rank = torch.distributed.get_rank()
+            _sync_world = torch.distributed.get_world_size()
+            if _sync_world > 1:
+                # Step 1: broadcast whether rank 0 actually has a checkpoint
+                _ckpt_info = [
+                    resume_ckpt
+                    if (_sync_rank == 0 and resume_ckpt and os.path.isfile(str(resume_ckpt)))
+                    else None
+                ]
+                torch.distributed.broadcast_object_list(_ckpt_info, src=0)
+                _src_ckpt = _ckpt_info[0]
+
+                if _src_ckpt is not None:
+                    _ckpt_basename = os.path.basename(_src_ckpt)
+                    _local_ckpt = os.path.join(cfg.OUTPUT_DIR, _ckpt_basename)
+
+                    # Step 2: rank 0 reads the file; workers allocate a buffer
+                    if _sync_rank == 0:
+                        with open(_src_ckpt, 'rb') as _f:
+                            _raw = bytearray(_f.read())
+                        _n = len(_raw)
+                        print(
+                            f"[CKPT-SYNC] Broadcasting '{_ckpt_basename}' "
+                            f"({_n / (1024**2):.1f} MB) to {_sync_world - 1} worker(s)…"
+                        )
+                    else:
+                        _raw = None
+                        _n = 0
+
+                    # Step 3: broadcast file size, then file bytes (via NCCL on CUDA)
+                    _size_t = torch.tensor([_n], dtype=torch.int64, device='cuda')
+                    torch.distributed.broadcast(_size_t, src=0)
+                    _n = int(_size_t.item())
+
+                    if _sync_rank == 0:
+                        import numpy as _np
+                        _data_t = torch.from_numpy(
+                            _np.frombuffer(_raw, dtype=_np.uint8).copy()
+                        ).cuda()
+                    else:
+                        _data_t = torch.zeros(_n, dtype=torch.uint8, device='cuda')
+
+                    torch.distributed.broadcast(_data_t, src=0)
+
+                    # Step 4: workers write checkpoint + last_checkpoint locally
+                    if _sync_rank != 0:
+                        os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
+                        with open(_local_ckpt, 'wb') as _f:
+                            _f.write(_data_t.cpu().numpy().tobytes())
+                        with open(os.path.join(cfg.OUTPUT_DIR, "last_checkpoint"), 'w') as _f:
+                            _f.write(_ckpt_basename)
+                        resume_ckpt = _local_ckpt
+                        print(f"[CKPT-SYNC] Rank {_sync_rank}: saved checkpoint → {_local_ckpt}")
+
+                    # clean up GPU buffer immediately
+                    del _data_t
+                    torch.cuda.empty_cache()
+                    print(f"[CKPT-SYNC] Rank {_sync_rank}: checkpoint sync complete")
+                else:
+                    print("[CKPT-SYNC] Rank 0 has no checkpoint; all ranks will start from scratch")
+        except Exception as _e:
+            print(f"[WARN] Checkpoint sync failed (will attempt resume anyway): {_e}")
 
     # resume=True will continue from last checkpoint if present
     try:
@@ -1482,61 +1540,25 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
     except Exception as e:
         print(f"[RESUME][WARN] Could not inspect resume state: {e}")
 
-    # Synchronize start_iter across all ranks.
-    #
-    # WHY THIS IS NEEDED:
-    #   Each node mounts its own local workspace, so each node has its own
-    #   copy of the output/checkpoint directory.  If a previous run left a
-    #   checkpoint on spark02 but not on spark01 (or vice-versa), the two
-    #   ranks load different start_iter values and run a DIFFERENT number of
-    #   gradient ALLREDUCE operations before training ends.  Rank 0 exits the
-    #   training loop and issues the eval comm.synchronize() barrier (1-element
-    #   NCCL ALLREDUCE) while rank 1 is still doing a full gradient ALLREDUCE
-    #   (43M-element NCCL ALLREDUCE) – same SeqNum, different payloads →
-    #   NCCL "message truncated" → SIGABRT.
-    #
-    # CALLING d2_comm.all_gather HERE also pre-initialises the global gloo
-    # process group on all ranks before training starts.  Without this, the
-    # gloo group is created lazily the first time write_metrics() calls
-    # comm.gather(), which can race with a different collective on another rank.
+    # Warm up the global gloo process group on all ranks now, before training
+    # starts.  Without this, gloo is created lazily the first time
+    # write_metrics() calls comm.gather(), which can race with an NCCL
+    # collective on another rank.  Also verifies that the checkpoint sync above
+    # produced a consistent start_iter across all ranks.
     try:
         from detectron2.utils import comm as d2_comm
         my_start = int(getattr(trainer, "start_iter", 0))
-        all_starts = d2_comm.all_gather(my_start)  # also warms up gloo group
+        all_starts = d2_comm.all_gather(my_start)  # initialises gloo group
         if len(set(all_starts)) > 1:
-            print(
-                f"[ERROR] start_iter mismatch across ranks: "
-                f"{dict(enumerate(all_starts))}"
+            # Should not happen after the checkpoint sync — log and abort cleanly.
+            raise RuntimeError(
+                f"start_iter mismatch after checkpoint sync: "
+                f"{dict(enumerate(all_starts))}. "
+                "Check that the CKPT-SYNC block above succeeded on all ranks."
             )
-            print(
-                "[ERROR] Root cause: each node has a different (or missing) "
-                "checkpoint in its local output directory.  This causes ranks "
-                "to run different numbers of gradient ALLREDUCEs, which "
-                "produces an NCCL collective payload mismatch and SIGABRT."
-            )
-            print(
-                "[ERROR] Permanent fix: use shared/NFS output storage so all "
-                "nodes see the same checkpoint, OR delete stale checkpoints "
-                "from all nodes before starting a new run."
-            )
-            # Immediate mitigation: align to the lowest start_iter so every
-            # rank trains the full remaining range.
-            # NOTE: if one rank resumed from a later checkpoint its model
-            # weights will still differ from ranks that started fresh – the
-            # gradient syncs will gradually re-align the weights but the first
-            # few steps may be noisier than normal.
-            min_start = min(all_starts)
-            rank_id = d2_comm.get_rank()
-            if my_start != min_start:
-                print(
-                    f"[WARN] Rank {rank_id}: adjusting start_iter "
-                    f"{my_start} → {min_start} to prevent NCCL mismatch."
-                )
-                trainer.start_iter = min_start
-        else:
-            print(f"[INFO] start_iter consistent across all ranks: {all_starts[0]}")
+        print(f"[INFO] start_iter consistent across all ranks: {all_starts[0]}")
     except Exception as e:
-        print(f"[WARN] Could not synchronize start_iter across ranks: {e}")
+        print(f"[WARN] Pre-training gloo warmup / start_iter check failed: {e}")
 
     # --- DDP & data-loader sanity checks (help debug multi-node behavior) ---
     try:
@@ -1597,12 +1619,9 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
 
     RUN_EVALUATION = True  # Set to True to run evaluation after training
     # Post-train eval runs on rank 0 only with distributed=False.
-    # On a fresh run (resume=False) this is supplementary — the distributed
-    # EvalHook already ran during after_train.
-    # On a resume run (resume=True) the EvalHook was removed above, so THIS
-    # block is the only eval that runs.  Using rank-0-only / distributed=False
-    # avoids the NCCL collective mismatch that would occur when nodes resumed
-    # from different (or missing) local checkpoints.
+    # The distributed EvalHook (build_evaluator, distributed=True) already ran
+    # during after_train on all ranks.  This block is a supplementary rank-0 eval
+    # for logging final results with any user-specified task filters (eval_bbox_only).
     if RUN_EVALUATION and is_main:
         try:
             from detectron2.evaluation import COCOEvaluator, inference_on_dataset
