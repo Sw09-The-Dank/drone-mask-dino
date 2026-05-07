@@ -28,7 +28,7 @@ NCCL_IFNAME=""
 MEMORY="90g"
 USE_SUDO_DOCKER="0"
 SSH_HOST_USER=""
-DISABLE_PERIODIC_EVAL="1"
+DISABLE_PERIODIC_EVAL="0"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
@@ -55,9 +55,9 @@ Optional:
   --ssh-host-user <user>   SSH user for master node (worker only). Used to check
                            if a variant is already done on the host before running.
                            Example: --ssh-host-user spark1gm
-  --keep-periodic-eval     Keep Detectron2 TEST.EVAL_PERIOD during training.
-                           Default behavior disables periodic eval for ablation runs
-                           and relies on post-run artifacts/checkpoints instead.
+  --no-periodic-eval       Disable Detectron2 TEST.EVAL_PERIOD during training.
+                           Default behavior keeps periodic eval enabled.
+                           Use this flag to skip in-run eval and rely on post-run checkpoints instead.
   --cpu-only               Disable --gpus all.
   -h, --help               Show this help.
 EOF
@@ -113,8 +113,8 @@ while [[ $# -gt 0 ]]; do
       SSH_HOST_USER="${2:-}"
       shift 2
       ;;
-    --keep-periodic-eval)
-      DISABLE_PERIODIC_EVAL="0"
+    --keep-periodic-eval|--no-periodic-eval)
+      DISABLE_PERIODIC_EVAL="1"
       shift
       ;;
     --cpu-only)
@@ -264,6 +264,8 @@ for variant_path in "${variants[@]}"; do
   echo "output=${output_dir}"
   if [[ "$DISABLE_PERIODIC_EVAL" == "1" ]]; then
     echo "periodic_eval=disabled"
+  else
+    echo "periodic_eval=enabled"
   fi
 
   extra_env=()
