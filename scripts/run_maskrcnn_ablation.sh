@@ -29,6 +29,7 @@ MEMORY="90g"
 USE_SUDO_DOCKER="0"
 SSH_HOST_USER=""
 DISABLE_PERIODIC_EVAL="0"
+DROP_CACHES="0"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
@@ -58,6 +59,10 @@ Optional:
   --no-periodic-eval       Disable Detectron2 TEST.EVAL_PERIOD during training.
                            Default behavior keeps periodic eval enabled.
                            Use this flag to skip in-run eval and rely on post-run checkpoints instead.
+  --drop-caches            Drop the host kernel page/slab cache between variants
+                           (runs: sync && echo 3 > /proc/sys/vm/drop_caches via sudo -n).
+                           Strongly recommended when running many variants sequentially to
+                           prevent OOM caused by page-cache accumulation across runs.
   --cpu-only               Disable --gpus all.
   -h, --help               Show this help.
 EOF
@@ -115,6 +120,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keep-periodic-eval|--no-periodic-eval)
       DISABLE_PERIODIC_EVAL="1"
+      shift
+      ;;
+    --drop-caches)
+      DROP_CACHES="1"
       shift
       ;;
     --cpu-only)
@@ -339,8 +348,22 @@ for variant_path in "${variants[@]}"; do
     exit 1
   fi
 
-  # Give the OS time to release the rendezvous port before the next variant.
-  sleep 10
+  # Drop the host page/slab cache to prevent OOM accumulation across variants.
+  # Each training run loads the full dataset many times; without this the kernel
+  # holds those pages resident and subsequent containers may OOM early in training.
+  if [[ "$DROP_CACHES" == "1" ]]; then
+    echo "[$(date '+%F %T')] Dropping host kernel page cache..."
+    sync
+    if echo 3 | sudo -n tee /proc/sys/vm/drop_caches > /dev/null 2>&1; then
+      echo "[$(date '+%F %T')] Page cache dropped."
+    else
+      echo "[$(date '+%F %T')] WARN: drop_caches requires passwordless sudo. Cache NOT dropped." >&2
+      echo "[$(date '+%F %T')] To fix: add 'username ALL=(ALL) NOPASSWD: /usr/bin/tee' to sudoers." >&2
+    fi
+  fi
+
+  # Give the OS time to release the rendezvous port and finish memory reclaim.
+  sleep 30
 done
 
 echo "All variants completed for role: $ROLE"
