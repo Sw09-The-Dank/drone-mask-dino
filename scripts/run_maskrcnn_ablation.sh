@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail  # note: -e removed so a failed variant does not abort the whole run
 
 # Run Mask R-CNN training over each dataset variant inside an ablation folder.
 #
@@ -273,7 +273,7 @@ for variant_path in "${variants[@]}"; do
     extra_env+=("-e" "NCCL_SOCKET_IFNAME=${NCCL_IFNAME}")
   fi
 
-  docker_args=(run --rm -it
+  docker_args=(run --rm -i
     --network=host
     --ipc=host
     --ulimit memlock=-1
@@ -285,7 +285,7 @@ for variant_path in "${variants[@]}"; do
   )
 
   if [[ "$USE_GPU" == "1" ]]; then
-    docker_args=(run --gpus all --rm -it
+    docker_args=(run --gpus all --rm -i
       --network=host
       --ipc=host
       --ulimit memlock=-1
@@ -297,6 +297,7 @@ for variant_path in "${variants[@]}"; do
     )
   fi
 
+  variant_exit=0
   "${DOCKER_BIN[@]}" "${docker_args[@]}" \
     "${extra_env[@]}" \
     "$IMAGE" \
@@ -309,7 +310,16 @@ for variant_path in "${variants[@]}"; do
       --config-file ${CONFIG_FILE} \
       ${train_args[*]} \
       --no-resume
-    "
+    " || variant_exit=$?
+
+  if [[ "$variant_exit" -ne 0 ]]; then
+    echo "[$(date '+%F %T')] ERROR: variant ${variant_name} failed with exit code ${variant_exit}. Continuing to next variant." >&2
+  else
+    echo "[$(date '+%F %T')] Finished variant: ${variant_name}"
+  fi
+
+  # Give the OS time to release the rendezvous port before the next variant.
+  sleep 10
 done
 
 echo "All variants completed for role: $ROLE"
