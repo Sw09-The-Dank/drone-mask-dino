@@ -204,7 +204,25 @@ if ! "${DOCKER_BIN[@]}" info >/dev/null 2>&1; then
   fi
 fi
 
+ABORT=0
+
 SUDO_KEEPALIVE_PID=""
+
+cleanup() {
+  if [[ -n "$SUDO_KEEPALIVE_PID" ]]; then
+    kill "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true
+  fi
+}
+
+abort_handler() {
+  ABORT=1
+  echo "" >&2
+  echo "[$(date '+%F %T')] Interrupted — finishing current Docker call then exiting." >&2
+}
+
+trap cleanup EXIT
+trap abort_handler INT TERM
+
 if [[ "${DOCKER_BIN[0]}" == "sudo" ]]; then
   echo "Authenticating sudo once for the full run..."
   sudo -v
@@ -212,13 +230,6 @@ if [[ "${DOCKER_BIN[0]}" == "sudo" ]]; then
   # Keep sudo ticket fresh so each variant run does not reprompt.
   ( while true; do sudo -n true; sleep 50; done ) &
   SUDO_KEEPALIVE_PID="$!"
-
-  cleanup() {
-    if [[ -n "$SUDO_KEEPALIVE_PID" ]]; then
-      kill "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true
-    fi
-  }
-  trap cleanup EXIT
 fi
 
 for variant_path in "${variants[@]}"; do
@@ -313,9 +324,19 @@ for variant_path in "${variants[@]}"; do
     " || variant_exit=$?
 
   if [[ "$variant_exit" -ne 0 ]]; then
+    # Exit code 130 = SIGINT (Ctrl+C), 143 = SIGTERM — treat as intentional abort.
+    if [[ "$variant_exit" -eq 130 || "$variant_exit" -eq 143 || "$ABORT" -eq 1 ]]; then
+      echo "[$(date '+%F %T')] Aborted by user during variant ${variant_name}." >&2
+      exit 1
+    fi
     echo "[$(date '+%F %T')] ERROR: variant ${variant_name} failed with exit code ${variant_exit}. Continuing to next variant." >&2
   else
     echo "[$(date '+%F %T')] Finished variant: ${variant_name}"
+  fi
+
+  if [[ "$ABORT" -eq 1 ]]; then
+    echo "[$(date '+%F %T')] Aborted by user. Stopping." >&2
+    exit 1
   fi
 
   # Give the OS time to release the rendezvous port before the next variant.
