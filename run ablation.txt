@@ -4,3 +4,22 @@ bash scripts/run_maskrcnn_ablation.sh --role host --master-addr 169.254.18.231 -
 
 Worker:
 bash scripts/run_maskrcnn_ablation.sh   --role worker   --master-addr 169.254.18.231   --ablation-dir ./dataset/ablation   --nccl-ifname enp1s0f0np0   --sudo-docker   --ssh-host-user spark1gm --drop-caches
+
+
+
+
+Host:
+tmux new-session -s ablation
+bash scripts/run_maskrcnn_ablation.sh --role host --master-addr 169.254.18.231 \
+  --ablation-dir ./dataset/ablation --nccl-ifname enp1s0f1np1 \
+  --sudo-docker --drop-caches
+# Ctrl+B, D  to detach — script keeps running
+
+Worker:
+tmux new-session -s ablation
+bash scripts/run_maskrcnn_ablation.sh --role worker --master-addr 169.254.18.231 \
+  --ablation-dir ./dataset/ablation --nccl-ifname enp1s0f0np0 \
+  --sudo-docker --ssh-host-user spark1gm --drop-caches
+# Ctrl+B, D  to detach
+
+tmux attach -t ablation
