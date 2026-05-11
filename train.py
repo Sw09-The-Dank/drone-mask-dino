@@ -202,6 +202,87 @@ class RandomGaussianBlurMapper:
         return data
 
 
+class RandomGaussianNoiseMapper:
+    """Wrap a dataset mapper and apply random Gaussian noise to training images."""
+
+    def __init__(self, mapper, prob: float = 0.0, mean: float = 0.0, std_min: float = 5.0, std_max: float = 25.0):
+        self.mapper = mapper
+        self.prob = float(prob)
+        self.mean = float(mean)
+        self.std_min = float(std_min)
+        self.std_max = float(std_max)
+
+    def __call__(self, dataset_dict):
+        data = self.mapper(dataset_dict)
+        if data is None:
+            return data
+        if self.prob <= 0.0 or random.random() >= self.prob:
+            return data
+
+        img = data.get("image", None)
+        if img is None or not torch.is_tensor(img) or img.ndim != 3:
+            return data
+
+        std = random.uniform(self.std_min, self.std_max)
+        noise = torch.randn_like(img.float()) * std + self.mean
+        noisy = img.float() + noise
+        # Clamp to valid range for the original dtype
+        if img.dtype == torch.uint8:
+            noisy = noisy.clamp(0, 255)
+        out = noisy.to(dtype=img.dtype)
+        data["image"] = out.to(device=img.device)
+        return data
+
+
+class RandomMotionBlurMapper:
+    """Wrap a dataset mapper and apply random motion blur to training images."""
+
+    def __init__(self, mapper, prob: float = 0.0, length_min: int = 5, length_max: int = 20,
+                 angle_min: float = 0.0, angle_max: float = 360.0):
+        self.mapper = mapper
+        self.prob = float(prob)
+        self.length_min = int(length_min)
+        self.length_max = int(length_max)
+        self.angle_min = float(angle_min)
+        self.angle_max = float(angle_max)
+
+    @staticmethod
+    def _make_kernel(length: int, angle_deg: float):
+        import numpy as np
+        kernel = np.zeros((length, length), dtype=np.float32)
+        kernel[length // 2, :] = 1.0 / length
+        cx = cy = length // 2
+        M = cv2.getRotationMatrix2D((cx, cy), angle_deg, 1.0)
+        return cv2.warpAffine(kernel, M, (length, length))
+
+    def __call__(self, dataset_dict):
+        data = self.mapper(dataset_dict)
+        if data is None or cv2 is None:
+            return data
+        if self.prob <= 0.0 or random.random() >= self.prob:
+            return data
+
+        img = data.get("image", None)
+        if img is None or not torch.is_tensor(img) or img.ndim != 3:
+            return data
+
+        length = random.randint(self.length_min, self.length_max)
+        angle = random.uniform(self.angle_min, self.angle_max)
+        kernel = self._make_kernel(length, angle)
+
+        src = img.detach().cpu()
+        np_img = src.permute(1, 2, 0).numpy()
+        blurred = cv2.filter2D(np_img, -1, kernel)
+        if blurred.ndim == 2:
+            blurred = blurred[:, :, None]
+
+        out = torch.from_numpy(blurred).permute(2, 0, 1)
+        if out.dtype != img.dtype:
+            out = out.to(dtype=img.dtype)
+        data["image"] = out.to(device=img.device)
+        return data
+
+
 def setup_ddp_from_env():
     """Initialize torch.distributed and detectron2 local PG from environment.
 
@@ -469,7 +550,9 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                         eval_focus_on_box=None,
                         fast_eval=False,
                         eval_bbox_only=False,
-                        gaussian_blur_prob=0.0):
+                        gaussian_blur=None,
+                        gaussian_noise=None,
+                        motion_blur=None):
     _ensure_pkg_resources_available()
     try:
         from detectron2.data.datasets import register_coco_instances
@@ -1377,9 +1460,8 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
             from detectron2.utils import comm
 
             mapper = DatasetMapper(cfg, is_train=True)
-            blur_prob = float(gaussian_blur_prob)
-            sigma_min = float(os.environ.get("GAUSSIAN_BLUR_SIGMA_MIN", "0.5"))
-            sigma_max = float(os.environ.get("GAUSSIAN_BLUR_SIGMA_MAX", "2.0"))
+            _blur = list(gaussian_blur) if gaussian_blur is not None else [0.0, 0.5, 2.0]
+            blur_prob, sigma_min, sigma_max = float(_blur[0]), float(_blur[1]), float(_blur[2])
 
             if cv2 is not None and blur_prob > 0.0:
                 mapper = RandomGaussianBlurMapper(
@@ -1393,7 +1475,43 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                     f"sigma=[{sigma_min}, {sigma_max}]"
                 )
             else:
-                print("[AUG] Gaussian blur disabled (cv2 missing or --gaussian-blur-prob<=0)")
+                print("[AUG] Gaussian blur disabled (cv2 missing or --gaussian-blur prob<=0)")
+
+            _noise = list(gaussian_noise) if gaussian_noise is not None else [0.0, 5.0, 25.0]
+            noise_prob, noise_std_min, noise_std_max = float(_noise[0]), float(_noise[1]), float(_noise[2])
+            noise_mean = 0.0
+
+            if noise_prob > 0.0:
+                mapper = RandomGaussianNoiseMapper(
+                    mapper,
+                    prob=noise_prob,
+                    mean=noise_mean,
+                    std_min=noise_std_min,
+                    std_max=noise_std_max,
+                )
+                print(
+                    f"[AUG] Gaussian noise enabled: prob={noise_prob} "
+                    f"std=[{noise_std_min}, {noise_std_max}]"
+                )
+            else:
+                print("[AUG] Gaussian noise disabled (--gaussian-noise prob<=0)")
+
+            _mblur = list(motion_blur) if motion_blur is not None else [0.0, 5, 20]
+            mblur_prob, mblur_len_min, mblur_len_max = float(_mblur[0]), int(_mblur[1]), int(_mblur[2])
+
+            if cv2 is not None and mblur_prob > 0.0:
+                mapper = RandomMotionBlurMapper(
+                    mapper,
+                    prob=mblur_prob,
+                    length_min=mblur_len_min,
+                    length_max=mblur_len_max,
+                )
+                print(
+                    f"[AUG] Motion blur enabled: prob={mblur_prob} "
+                    f"length=[{mblur_len_min}, {mblur_len_max}]"
+                )
+            else:
+                print("[AUG] Motion blur disabled (cv2 missing or --motion-blur prob<=0)")
 
             loader = build_detection_train_loader(cfg, mapper=mapper)
 
@@ -2188,7 +2306,15 @@ if __name__ == "__main__":
     parser.add_argument('--eval-detections-per-image', type=int, default=None, help='override TEST.DETECTIONS_PER_IMAGE to cap per-image predictions during eval')
     parser.add_argument('--eval-focus-on-box', dest='eval_focus_on_box', action='store_true', help='for MaskDINO, focus eval outputs on boxes to reduce mask post-processing cost')
     parser.add_argument('--no-eval-focus-on-box', dest='eval_focus_on_box', action='store_false', help='disable MaskDINO TEST_FOUCUS_ON_BOX override')
-    parser.add_argument('--gaussian-blur-prob', type=float, default=0.0, help='probability of applying random Gaussian blur augmentation during training (0 disables it)')
+    parser.add_argument('--gaussian-blur', type=float, nargs=3, default=[0.0, 0.5, 2.0],
+                        metavar=('PROB', 'SIGMA_MIN', 'SIGMA_MAX'),
+                        help='Gaussian blur augmentation as three values: prob sigma_min sigma_max (e.g. --gaussian-blur 0.5 0.5 2.0; prob=0 disables it)')
+    parser.add_argument('--gaussian-noise', type=float, nargs=3, default=[0.0, 5.0, 25.0],
+                        metavar=('PROB', 'STD_MIN', 'STD_MAX'),
+                        help='Gaussian noise augmentation as three values: prob std_min std_max (e.g. --gaussian-noise 0.4 5.0 25.0; prob=0 disables it)')
+    parser.add_argument('--motion-blur', type=float, nargs=3, default=[0.0, 5.0, 20.0],
+                        metavar=('PROB', 'LEN_MIN', 'LEN_MAX'),
+                        help='Motion blur augmentation as three values: prob len_min len_max (e.g. --motion-blur 0.5 5 20; prob=0 disables it; angle is randomised 0-360)')
     parser.set_defaults(eval_focus_on_box=None)
 
     args = parser.parse_args()
@@ -2220,5 +2346,7 @@ if __name__ == "__main__":
         eval_focus_on_box=args.eval_focus_on_box,
         fast_eval=args.fast_eval,
         eval_bbox_only=args.eval_bbox_only,
-        gaussian_blur_prob=args.gaussian_blur_prob,
+        gaussian_blur=args.gaussian_blur,
+        gaussian_noise=args.gaussian_noise,
+        motion_blur=args.motion_blur,
     )
