@@ -19,7 +19,7 @@ VAL_JSON="/workspace/dataset/scale25/val.json"
 IMAGES_ROOT="/workspace/dataset/scale25"
 
 # --- Base output directory (under repo root) ---
-OUTPUT_BASE="output/aug_sweep"
+OUTPUT_BASE="output/maskrcnn/aug_sweep"
 
 # --- Gaussian Blur runs: "prob sigma_min sigma_max" ---
 # prob is fixed at 0.5 across all runs; only sigma range varies (no overlap).
