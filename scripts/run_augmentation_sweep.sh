@@ -14,9 +14,9 @@ NPROC_PER_NODE="1"
 MEMORY="90g"
 
 # --- Dataset paths (inside the container, /workspace maps to repo root) ---
-TRAIN_JSON="/workspace/output_annotations/train_polygons.json"
-VAL_JSON="/workspace/output_annotations/val_polygons.json"
-IMAGES_ROOT="/workspace/dataset/images"
+TRAIN_JSON="/workspace/dataset/scale25/train.json"
+VAL_JSON="/workspace/dataset/scale25/val.json"
+IMAGES_ROOT="/workspace/dataset/scale25"
 
 # --- Base output directory (under repo root) ---
 OUTPUT_BASE="output/aug_sweep"
