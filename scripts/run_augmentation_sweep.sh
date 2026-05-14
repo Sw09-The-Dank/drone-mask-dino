@@ -35,7 +35,7 @@ NOISE_RUN_3="0.5 20.0 30.0"
 
 # --- Motion Blur runs: "prob len_min len_max" ---
 # prob is fixed at 0.5 across all runs; only kernel length range varies (no overlap).
-MBLUR_RUN_1="0.5 0 10"
+MBLUR_RUN_1="0.5 1 10"
 MBLUR_RUN_2="0.5 10 20"
 MBLUR_RUN_3="0.5 20 30"
 
