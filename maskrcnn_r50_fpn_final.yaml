@@ -4,10 +4,10 @@
 # Schedule scaling notes:
 # - 1x baseline ratios: STEPS=(60000, 80000), MAX_ITER=90000
 #   -> step ratios are 0.6667 and 0.8889 of MAX_ITER.
-# - For scale10 (~37120 images) with IMS_PER_BATCH=32:
-#   iters/epoch = ceil(37120/32) = 1160
-#   MAX_ITER = 10 * 1160 = 11600
-#   STEPS ~= (7733, 10311)
+# - For full dataset (50637 images, 80% train = 40510) with IMS_PER_BATCH=32:
+#   iters/epoch = ceil(40510/32) = 1266
+#   MAX_ITER = 10 * 1266 = 12660
+#   STEPS ~= (8440, 11253)
 
 VERSION: 2
 
@@ -50,8 +50,8 @@ DATALOADER:
 SOLVER:
   IMS_PER_BATCH: 32
   BASE_LR: 0.008
-  MAX_ITER: 11600
-  STEPS: (7733, 10311)
+  MAX_ITER: 12660
+  STEPS: (8440, 11253)
   WARMUP_ITERS: 5000
   CHECKPOINT_PERIOD: 5000
 
