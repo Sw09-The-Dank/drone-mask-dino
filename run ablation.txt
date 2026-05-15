@@ -23,3 +23,19 @@ bash scripts/run_maskrcnn_ablation.sh --role worker --master-addr 169.254.18.231
 # Ctrl+B, D  to detach
 
 tmux attach -t ablation
+
+
+
+$remoteUser = "spark1gm"
+$remoteHost = "130.226.99.163"
+$remotePath = "~/Documents/drone-mask-dino/output/maskrcnn"
+$localPath  = ".\collected_metrics"
+
+New-Item -ItemType Directory -Force -Path $localPath | Out-Null
+
+ssh "$remoteUser@$remoteHost" "find $remotePath -type f -name metrics.json" | ForEach-Object {
+    $remoteFile = $_.Trim()
+    $parentName = Split-Path (Split-Path $remoteFile -Parent) -Leaf
+    $localFile = Join-Path $localPath "$parentName.json"
+    scp "${remoteUser}@${remoteHost}:$remoteFile" $localFile
+}
