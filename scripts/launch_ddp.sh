@@ -63,8 +63,8 @@ echo "NCCL_DEBUG=${NCCL_DEBUG}, NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}, NCCL_I
 
 
 # Run torch distributed launcher (torch.distributed.run)
-# --timeout controls the rendezvous / elastic heartbeat timeout (seconds).
-# Keep it in sync with TORCH_NCCL_TIMEOUT_SEC so both layers agree.
+# The NCCL collective timeout is controlled via init_process_group in train.py
+# using the TORCH_NCCL_TIMEOUT_SEC env var (default 7200 s).
 : "${TORCH_NCCL_TIMEOUT_SEC:=7200}"
 export TORCH_NCCL_TIMEOUT_SEC=${TORCH_NCCL_TIMEOUT_SEC}
 python -m torch.distributed.run \
@@ -73,7 +73,6 @@ python -m torch.distributed.run \
   --node_rank=${NODE_RANK} \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
-  --rdzv-timeout=${TORCH_NCCL_TIMEOUT_SEC} \
   train.py "${EXTRA_ARGS[@]}"
 
 echo "DDP launcher exited with status $?"
