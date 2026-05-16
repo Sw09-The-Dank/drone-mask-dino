@@ -324,9 +324,19 @@ def setup_ddp_from_env():
     if torch.distributed.is_available() and not torch.distributed.is_initialized() and world_size > 1:
         backend = 'nccl' if cuda_available else 'gloo'
         print(f"[DDP] Selecting backend: {backend}")
-        torch.distributed.init_process_group(backend=backend, init_method='env://')
+        # Use a generous timeout (7200 s / 2 h) so that slow Python-land COCO evaluation
+        # (pycocotools accumulate on large val sets, especially on ARM) does not trigger
+        # the NCCL watchdog while one rank is still grinding through eval math.
+        # The default of 600 s caused spurious ALLREDUCE timeouts at the eval barrier.
+        _ddp_timeout_sec = int(os.environ.get("TORCH_NCCL_TIMEOUT_SEC", "7200"))
+        import datetime as _datetime
+        torch.distributed.init_process_group(
+            backend=backend,
+            init_method='env://',
+            timeout=_datetime.timedelta(seconds=_ddp_timeout_sec),
+        )
         rank = int(os.environ.get('RANK', os.environ.get('LOCAL_RANK', '0')))
-        print(f"DDP INIT: backend={backend} RANK={rank} LOCAL_RANK={local_rank} WORLD_SIZE={world_size}")
+        print(f"DDP INIT: backend={backend} RANK={rank} LOCAL_RANK={local_rank} WORLD_SIZE={world_size} timeout={_ddp_timeout_sec}s")
 
     # Ensure detectron2 local process group exists
     if torch.distributed.is_available() and torch.distributed.is_initialized():
