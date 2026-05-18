@@ -19,7 +19,8 @@ sudo docker run --gpus all --rm -it \
     --images-root /workspace/dataset/Final \
     --output output/maskrcnn/Final2 \
     --config-file maskrcnn_r50_fpn_final.yaml \
-    --gaussian-blur 0.02 0.1 1.0 --motion-blur 0.02 1 10 --gaussian-noise 0.02 0.0 10
+    --gaussian-blur 0.02 0.1 1.0 --motion-blur 0.02 1 10 --gaussian-noise 0.02 0.0 10 \
+    --no-resume
   "
 
   Host
@@ -42,7 +43,8 @@ sudo docker run --gpus all --rm -it \
     --images-root /workspace/dataset/Final \
     --output output/maskrcnn/Final2 \
     --config-file maskrcnn_r50_fpn_final.yaml \
-    --gaussian-blur 0.02 0.1 1.0 --motion-blur 0.02 1 10 --gaussian-noise 0.02 0.0 10
+    --gaussian-blur 0.02 0.1 1.0 --motion-blur 0.02 1 10 --gaussian-noise 0.02 0.0 10 \
+    --no-resume
   "
 
 --gaussian-blur 0.2 0.1 1.0 --motion-blur 0.2 1 10 --gaussian-noise 0.2 0.0 10
