@@ -13,7 +13,7 @@ VERSION: 2
 
 MODEL:
   META_ARCHITECTURE: "GeneralizedRCNN"
-  WEIGHTS: "/root/Documents/drone-mask-dino/output/maskrcnn/scale25/model_final.pth"
+  WEIGHTS: "/workspace/output/maskrcnn/scale25/model_final.pth"
   MASK_ON: True
   BACKBONE:
     NAME: "build_resnet_fpn_backbone"
