@@ -1745,12 +1745,12 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
         rank = 0
     is_main = (rank == 0)
 
-    RUN_EVALUATION = True  # Set to True to run evaluation after training
+    # Avoid duplicate final metrics: Detectron2's EvalHook already evaluates at
+    # the end of training. Keep this extra non-distributed pass opt-in only.
+    RUN_EXTRA_POST_TRAIN_EVAL = os.environ.get("RUN_EXTRA_POST_TRAIN_EVAL", "0") == "1"
     # Post-train eval runs on rank 0 only with distributed=False.
-    # The distributed EvalHook (build_evaluator, distributed=True) already ran
-    # during after_train on all ranks.  This block is a supplementary rank-0 eval
-    # for logging final results with any user-specified task filters (eval_bbox_only).
-    if RUN_EVALUATION and is_main:
+    # Enable only when explicitly requested for debugging/comparison.
+    if RUN_EXTRA_POST_TRAIN_EVAL and is_main:
         try:
             from detectron2.evaluation import COCOEvaluator, inference_on_dataset
             from detectron2.data import build_detection_test_loader
