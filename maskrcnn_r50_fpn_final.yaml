@@ -17,13 +17,14 @@ MODEL:
   MASK_ON: True
   BACKBONE:
     NAME: "build_resnet_fpn_backbone"
+    FREEZE_AT: 4  # freeze all ResNet stages (res2-res5); only FPN+heads train
   RESNETS:
     DEPTH: 50
     OUT_FEATURES: ["res2", "res3", "res4", "res5"]
   FPN:
     IN_FEATURES: ["res2", "res3", "res4", "res5"]
   ANCHOR_GENERATOR:
-    SIZES: [[8], [16], [32], [64], [128]]
+    SIZES: [[32], [64], [128], [256], [512]]
     ASPECT_RATIOS: [[0.5, 1.0, 2.0]]
   RPN:
     IN_FEATURES: ["p2", "p3", "p4", "p5", "p6"]
@@ -49,10 +50,11 @@ DATALOADER:
 
 SOLVER:
   IMS_PER_BATCH: 32
-  BASE_LR: 0.008
-  MAX_ITER: 12660
+  BASE_LR: 0.0008  # 10x lower than scratch — fine-tuning from pretrained checkpoint
+  MAX_ITER: 12660   # 25 epochs: ceil(40510/32)*25
   STEPS: (8440, 11253)
-  WARMUP_ITERS: 500
+  WARMUP_ITERS: 2000  # longer warmup to ease into the augmented data
+  WARMUP_FACTOR: 0.01
   CHECKPOINT_PERIOD: 5000
 
 TEST:
