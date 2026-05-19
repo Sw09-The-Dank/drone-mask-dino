@@ -17,10 +17,10 @@ sudo docker run --gpus all --rm -it \
     --train-json /workspace/dataset/Final/train.json \
     --val-json /workspace/dataset/Final/val.json \
     --images-root /workspace/dataset/Final \
-    --output output/maskrcnn/Final4 \
+    --output output/maskrcnn/FinalFreeze \
     --config-file maskrcnn_r50_fpn_final.yaml \
     --gaussian-blur 0.02 0.1 1.0 --motion-blur 0.02 1 10 --gaussian-noise 0.02 0.0 10 \
-    --no-resume --epochs 1
+     --epochs 10
   "
 
   Host
@@ -41,10 +41,10 @@ sudo docker run --gpus all --rm -it \
     --train-json /workspace/dataset/Final/train.json \
     --val-json /workspace/dataset/Final/val.json \
     --images-root /workspace/dataset/Final \
-    --output output/maskrcnn/Final4 \
+    --output output/maskrcnn/FinalFreeze \
     --config-file maskrcnn_r50_fpn_final.yaml \
     --gaussian-blur 0.02 0.1 1.0 --motion-blur 0.02 1 10 --gaussian-noise 0.02 0.0 10 \
-    --no-resume --epochs 1
+     --epochs 10
   "
 
 --gaussian-blur 0.2 0.1 1.0 --motion-blur 0.2 1 10 --gaussian-noise 0.2 0.0 10
