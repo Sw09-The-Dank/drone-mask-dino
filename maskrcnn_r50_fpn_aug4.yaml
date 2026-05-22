@@ -13,7 +13,7 @@ VERSION: 2
 
 MODEL:
   META_ARCHITECTURE: "GeneralizedRCNN"
-  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  WEIGHTS: "workspace://weights/MaskRCNN_R_50_FPN_1x.pth"
   MASK_ON: True
   BACKBONE:
     NAME: "build_resnet_fpn_backbone"
@@ -23,8 +23,8 @@ MODEL:
   FPN:
     IN_FEATURES: ["res2", "res3", "res4", "res5"]
   ANCHOR_GENERATOR:
-    SIZES: [[32], [64], [128], [256], [512]]
-    ASPECT_RATIOS: [[0.5, 1.0, 2.0]]
+    SIZES: [[8], [16], [32], [64], [128]]
+    ASPECT_RATIOS: [[0.25, 0.5, 1.0, 2.0, 4.0]]
   RPN:
     IN_FEATURES: ["p2", "p3", "p4", "p5", "p6"]
     PRE_NMS_TOPK_TRAIN: 2000
@@ -37,22 +37,22 @@ MODEL:
     BATCH_SIZE_PER_IMAGE: 512
   ROI_BOX_HEAD:
     NAME: "FastRCNNConvFCHead"
-    NUM_FC: 2
-    POOLER_RESOLUTION: 7
+    NUM_FC: 3
+    POOLER_RESOLUTION: 14
   ROI_MASK_HEAD:
     NAME: "MaskRCNNConvUpsampleHead"
-    NUM_CONV: 4
-    POOLER_RESOLUTION: 14
+    NUM_CONV: 6
+    POOLER_RESOLUTION: 28
 
 DATALOADER:
   NUM_WORKERS: 8
 
 SOLVER:
-  IMS_PER_BATCH: 32
-  BASE_LR: 0.008
+  IMS_PER_BATCH: 64
+  BASE_LR: 0.03
   MAX_ITER: 5800
   STEPS: (3867, 5156)
-  WARMUP_ITERS: 2500
+  WARMUP_ITERS: 500
   CHECKPOINT_PERIOD: 2500
 
 TEST:
