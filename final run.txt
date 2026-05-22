@@ -14,11 +14,11 @@ sudo docker run --gpus all --rm -it \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500 \
-    --train-json /workspace/dataset/Final/train.json \
-    --val-json /workspace/dataset/Final/val.json \
-    --images-root /workspace/dataset/Final \
-    --output output/maskrcnn/FinalFreeze \
-    --config-file maskrcnn_r50_fpn_final.yaml \
+    --train-json /workspace/dataset/aug1/train.json \
+    --val-json /workspace/dataset/aug1/val.json \
+    --images-root /workspace/dataset/aug1 \
+    --output output/maskrcnn/newaug1 \
+    --config-file maskrcnn_r50_fpn_aug1.yaml \
     --gaussian-blur 0.02 0.1 1.0 --motion-blur 0.02 1 10 --gaussian-noise 0.02 0.0 10 \
      --epochs 10
   "
@@ -38,11 +38,11 @@ sudo docker run --gpus all --rm -it \
   maskdino-demo:latest \
   /bin/bash -lc "
     bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500 \
-    --train-json /workspace/dataset/Final/train.json \
-    --val-json /workspace/dataset/Final/val.json \
-    --images-root /workspace/dataset/Final \
-    --output output/maskrcnn/FinalFreeze \
-    --config-file maskrcnn_r50_fpn_final.yaml \
+    --train-json /workspace/dataset/aug1/train.json \
+    --val-json /workspace/dataset/aug1/val.json \
+    --images-root /workspace/dataset/aug1 \
+    --output output/maskrcnn/newaug1 \
+    --config-file maskrcnn_r50_fpn_aug1.yaml \
     --gaussian-blur 0.02 0.1 1.0 --motion-blur 0.02 1 10 --gaussian-noise 0.02 0.0 10 \
      --epochs 10
   "
