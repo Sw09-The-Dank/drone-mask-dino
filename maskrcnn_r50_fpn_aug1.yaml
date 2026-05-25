@@ -23,7 +23,7 @@ MODEL:
   FPN:
     IN_FEATURES: ["res2", "res3", "res4", "res5"]
   ANCHOR_GENERATOR:
-    SIZES: [[8], [16], [32], [64], [128]]
+    SIZES: [[16], [32], [64], [128], [256]]
     ASPECT_RATIOS: [[0.25, 0.5, 1.0, 2.0, 4.0]]
   RPN:
     IN_FEATURES: ["p2", "p3", "p4", "p5", "p6"]
@@ -49,7 +49,7 @@ DATALOADER:
 
 SOLVER:
   IMS_PER_BATCH: 64
-  BASE_LR: 0.03
+  BASE_LR: 0.02
   MAX_ITER: 2320
   STEPS: (1547, 2062)
   WARMUP_ITERS: 500
@@ -59,5 +59,5 @@ TEST:
   EVAL_PERIOD: 1000
 
 INPUT:
-  MIN_SIZE_TRAIN: (640, 672, 704, 736, 768, 800)
+  MIN_SIZE_TRAIN: (1024,)
   MAX_SIZE_TRAIN: 1333
