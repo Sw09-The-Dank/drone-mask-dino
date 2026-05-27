@@ -1183,10 +1183,16 @@ def run_default_trainer(train_json_path="output_annotations/train_polygons.json"
                     for p in parts[:-1]:
                         node = getattr(node, p)
                     attr = parts[-1]
-                    # parse value to bool/int/float when possible
+                    # parse value to bool/int/float/tuple/list when possible
+                    import ast
                     v_lower = val.lower()
                     if v_lower in ('true', 'false'):
                         parsed = v_lower == 'true'
+                    elif val.startswith('(') or val.startswith('['):
+                        try:
+                            parsed = ast.literal_eval(val)
+                        except Exception:
+                            parsed = val
                     else:
                         try:
                             if '.' in val:
