@@ -1,0 +1,59 @@
+worker
+
+sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  --memory=90g \
+  --memory-swap=90g \
+  -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
+  -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
+  -v "$(pwd):/workspace" -w /workspace \
+  maskdino-demo:latest \
+  /bin/bash -lc "
+    bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500 \
+    --train-json /workspace/dataset/swapaug7/train.json \
+    --val-json /workspace/dataset/swapaug7/val.json \
+    --images-root /workspace/dataset/swapaug7 \
+    --output output/maskrcnn/swapaug7size+anchorfull101 \
+    --config-file maskrcnn_r50_working_augment.yaml \
+    --epochs 25 --gaussian-blur 0.1 0.1 1.0 --motion-blur 0.1 1 10 --gaussian-noise 0.1 0.0 10 \
+    -s 'INPUT.MAX_SIZE_TRAIN=(1920)' -s 'INPUT.MIN_SIZE_TRAIN=(640, 672, 704, 736, 768, 800, 900, 1080)' \
+    -s 'MODEL.ANCHOR_GENERATOR.SIZES=[[8, 32], [16, 64], [32, 128], [64, 256], [128, 512]]' \
+    -s 'MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION=14' \
+    -s 'MODEL.ROI_MASK_HEAD.POOLER_RESOLUTION=28' \
+    -s 'MODEL.RESNETS.DEPTH=101' \
+    -s 'MODEL.WEIGHTS=detectron2://ImageNetPretrained/MSRA/R-101.pkl'
+  "
+
+  Host
+
+  sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  --memory=90g \
+  --memory-swap=90g \
+  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
+  -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
+  -v "$(pwd):/workspace" -w /workspace \
+  maskdino-demo:latest \
+  /bin/bash -lc "
+    bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500 \
+    --train-json /workspace/dataset/swapaug7/train.json \
+    --val-json /workspace/dataset/swapaug7/val.json \
+    --images-root /workspace/dataset/swapaug7 \
+    --output output/maskrcnn/swapaug7size+anchorfull101 \
+    --config-file maskrcnn_r50_working_augment.yaml \
+    --epochs 25 --gaussian-blur 0.1 0.1 1.0 --motion-blur 0.1 1 10 --gaussian-noise 0.1 0.0 10 \
+    -s 'INPUT.MAX_SIZE_TRAIN=(1920)' -s 'INPUT.MIN_SIZE_TRAIN=(640, 672, 704, 736, 768, 800, 900, 1080)' \
+    -s 'MODEL.ANCHOR_GENERATOR.SIZES=[[8, 32], [16, 64], [32, 128], [64, 256], [128, 512]]' \
+    -s 'MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION=14' \
+    -s 'MODEL.ROI_MASK_HEAD.POOLER_RESOLUTION=28' \
+    -s 'MODEL.RESNETS.DEPTH=101' \
+    -s 'MODEL.WEIGHTS=detectron2://ImageNetPretrained/MSRA/R-101.pkl'
+  "
+
+--gaussian-blur 0.2 0.1 1.0 --motion-blur 0.2 1 10 --gaussian-noise 0.2 0.0 10
