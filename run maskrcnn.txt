@@ -1,0 +1,45 @@
+worker
+
+sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  --memory=90g \
+  --memory-swap=90g \
+  -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
+  -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
+  -v "$(pwd):/workspace" -w /workspace \
+  maskdino-demo:latest \
+  /bin/bash -lc "
+    bash ./scripts/launch_ddp.sh 2 1 1 169.254.18.231 29500 \
+    --train-json /workspace/dataset/ablation/brightness3/train.json \
+    --val-json /workspace/dataset/ablation/brightness3/val.json \
+    --images-root /workspace/dataset/ablation/brightness3 \
+    --output output/maskrcnn/brightness3 \
+    --config-file maskrcnn_r50_fpn_1x_25ep_scale.yaml \
+    
+  "
+
+  Host
+
+  sudo docker run --gpus all --rm -it \
+  --network=host \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  --memory=90g \
+  --memory-swap=90g \
+  -e NCCL_SOCKET_IFNAME=enp1s0f1np1 \
+  -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro \
+  -v "$(pwd):/workspace" -w /workspace \
+  maskdino-demo:latest \
+  /bin/bash -lc "
+    bash ./scripts/launch_ddp.sh 2 1 0 169.254.18.231 29500 \
+    --train-json /workspace/dataset/ablation/brightness3/train.json \
+    --val-json /workspace/dataset/ablation/brightness3/val.json \
+    --images-root /workspace/dataset/ablation/brightness3 \
+    --output output/maskrcnn/brightness3 \
+    --config-file maskrcnn_r50_fpn_1x_25ep_scale.yaml \
+    
+  "

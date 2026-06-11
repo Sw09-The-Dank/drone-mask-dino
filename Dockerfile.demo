@@ -1,0 +1,136 @@
+# Minimal pip-based CUDA Dockerfile for running MaskDINO (no conda)
+# Installs CUDA-enabled PyTorch from the base image and uses pip for requirements
+
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.01-py3
+ARG BUILD_OPS_AT_BUILD=1
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-lc"]
+WORKDIR /workspace
+
+# Copy requirements early to leverage Docker layer caching
+COPY requirements.txt /workspace/requirements.txt
+COPY MaskDINO/requirements.txt /workspace/MaskDINO-requirements.txt
+
+# Install minimal system dependencies required by Detectron2/MaskDINO and for building wheels.
+# Some EGL/GL package names vary across Ubuntu releases and vendor images; attempt
+# core packages first, then try EGL/mesa variants with fallbacks so build doesn't fail.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        build-essential ca-certificates git wget curl pkg-config cmake \
+        libglib2.0-0 libsm6 libxrender1 libxext6 libhdf5-dev libjpeg-dev zlib1g-dev unzip \
+        libgl1 ninja-build perl \
+        libopenmpi3 libopenmpi-dev; \
+    # Try common EGL/mesa package names (non-fatal if none available)
+    (apt-get install -y --no-install-recommends libegl-mesa0 || apt-get install -y --no-install-recommends libegl1-mesa || true); \
+    (apt-get install -y --no-install-recommends libgl1-mesa-dri || true); \
+    rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip and install Python requirements via pip
+RUN set -eux; \
+    python -m pip install --upgrade pip "setuptools<81" wheel; \
+    # Install project requirements and MaskDINO-specific requirements; fail build on error
+    pip install --no-cache-dir -r /workspace/requirements.txt; \
+    pip install --no-cache-dir -r /workspace/MaskDINO-requirements.txt; \
+    # Ensure `timm` is present (some base images need it explicitly)
+    python -m pip install --no-cache-dir timm; \
+    # Gradio for the demo UI
+    python -m pip install --no-cache-dir gradio
+
+# Fail early if setuptools/pkg_resources is unavailable (detectron2 import dependency)
+RUN python -c "import setuptools, pkg_resources; print('BUILD-CHECK setuptools', setuptools.__version__, 'pkg_resources OK')"
+
+# Ensure OpenCV is installed (try full package, fall back to headless)
+RUN set -eux; \
+    python -m pip install opencv-python || python -m pip install opencv-python-headless
+
+# Pin NumPy to <2 and ensure build helpers are present so native extensions
+# compile against a compatible ABI. Also ensure a recent pybind11 and ninja
+# are available for building C++/CUDA extensions.
+RUN set -eux; \
+    python -m pip install "numpy<2" "pybind11>=2.12" ninja || true
+
+# (detectron2 will be installed after copying workspace so local source is used)
+
+# Copy repository into image (demo expects MaskDINO/ and configs present)
+COPY . /workspace
+
+# Ensure the workspace and embedded MaskDINO package are on PYTHONPATH so imports
+# like `from MaskDINO.maskdino.config import ...` resolve when running from the
+# mounted repository root.
+ENV PYTHONPATH=/workspace/MaskDINO:/workspace
+
+# Ensure CUDA and common loader paths are available for runtime shared libs.
+# Include both lib and lib64 HPC-X layouts plus x86_64/aarch64 system paths.
+ENV LD_LIBRARY_PATH=/opt/hpcx/ucx/lib:/opt/hpcx/ucx/lib64:/opt/hpcx/ucc/lib:/opt/hpcx/ucc/lib64:/opt/hpcx/ompi/lib:/opt/hpcx/ompi/lib64:/opt/hpcx/lib:/opt/hpcx/lib64:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu:${LD_LIBRARY_PATH:-}
+
+## Install detectron2 (prefer local source) and common extras before ops build
+RUN set -eux; \
+    # Ensure matching HPC-X UCX/UCC libraries are preferred together when present.
+    # This avoids torch import failures from mixing UCC with incompatible UCX libs.
+    if [ -d /opt/hpcx/ucx ] && [ -d /opt/hpcx/ucc ]; then \
+        export LD_LIBRARY_PATH="/opt/hpcx/ucx/lib:/opt/hpcx/ucx/lib64:/opt/hpcx/ucc/lib:/opt/hpcx/ucc/lib64:/opt/hpcx/ompi/lib:/opt/hpcx/ompi/lib64:/opt/hpcx/lib:/opt/hpcx/lib64:${LD_LIBRARY_PATH}"; \
+    fi; \
+    python -c "import torch; print('torch import ok')"; \
+    python -m pip install --upgrade pip "setuptools<81" wheel; \
+    if [ -d /workspace/detectron2 ]; then \
+        python -m pip install -e /workspace/detectron2 --no-build-isolation; \
+    else \
+        python -m pip install --no-build-isolation git+https://github.com/facebookresearch/detectron2.git; \
+    fi; \
+    python -m pip install git+https://github.com/cocodataset/panopticapi.git; \
+    python -m pip install git+https://github.com/mcordts/cityscapesScripts.git
+
+## Make MaskDINO importable during build and ensure pip build steps use the
+## active environment (so torch is available during build-wheel for ops).
+ENV PIP_NO_BUILD_ISOLATION=1
+RUN set -eux; \
+    if [ -d /workspace/MaskDINO ]; then \
+        python -m pip install --no-deps --no-build-isolation -e /workspace/MaskDINO || true; \
+    fi
+
+## Compiled CUDA ops should be built at runtime with `/workspace/build_ops.sh` if needed
+
+# Make the provided helper executable
+COPY build_ops.sh /workspace/build_ops.sh
+RUN chmod +x /workspace/build_ops.sh 
+
+# Optionally compile CUDA ops during image build. This requires a devel base image
+# that includes the CUDA toolkit (nvcc). Build with `--build-arg BUILD_OPS_AT_BUILD=1`
+# and a devel base image, for example:
+#   docker build -f Dockerfile.demo --build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.01-py3-devel \ 
+#       --build-arg BUILD_OPS_AT_BUILD=1 -t maskdino-demo:devel .
+
+# Copy helper scripts for build-time ops compilation (split for easier debugging)
+COPY prepare_patch.sh /workspace/prepare_patch.sh
+COPY build_make.sh /workspace/build_make.sh
+COPY create_shims.py /workspace/create_shims.py
+RUN chmod +x /workspace/prepare_patch.sh /workspace/build_make.sh 
+
+# Run the steps in sequence; normalize line endings and invoke with bash so
+# CRLF shebangs don't break in Linux build environments.
+RUN set -eux; \
+    sed -i 's/\r$//' /workspace/prepare_patch.sh /workspace/build_make.sh /workspace/create_shims.py; \
+    sed -i 's/\r$//' /workspace/scripts/*.sh ; \
+    chmod +x /workspace/prepare_patch.sh /workspace/build_make.sh /workspace/scripts/*.sh ; \
+    /bin/bash /workspace/prepare_patch.sh && /bin/bash /workspace/build_make.sh && python3 /workspace/create_shims.py
+
+
+# Default command runs the demo; override as needed
+# Copy entrypoint into the workspace for convenience and also bake a copy
+# into `/usr/local/bin` so host bind-mounting `/workspace` cannot clobber
+# the executable the image expects to run as the container entrypoint.
+COPY docker-entrypoint.sh /workspace/docker-entrypoint.sh
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /workspace/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+# Use the baked entrypoint in `/usr/local/bin` to avoid permission/overwrite
+# issues when the host mounts the repo over `/workspace` at runtime.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["python","MaskDINO/demo/demo.py","--config-file","/workspace/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s.yaml"]
+
+# Expose Gradio default port for the web UI
+EXPOSE 7860
+

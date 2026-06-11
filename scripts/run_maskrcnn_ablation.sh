@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+set -uo pipefail  # note: -e removed so a failed variant does not abort the whole run
+
+# Run Mask R-CNN training over each dataset variant inside an ablation folder.
+#
+# Example (host node):
+#   ./scripts/run_maskrcnn_ablation.sh \
+#     --role host \
+#     --master-addr 169.254.18.231 \
+#     --ablation-dir /Documents/drone-mask-dino/dataset/ablation
+#
+# Example (worker node):
+#   ./scripts/run_maskrcnn_ablation.sh \
+#     --role worker \
+#     --master-addr 169.254.18.231 \
+#     --ablation-dir /Documents/drone-mask-dino/dataset/ablation
+
+ROLE=""
+MASTER_ADDR=""
+MASTER_PORT="29500"
+AB_DIR=""
+IMAGE="maskdino-demo:latest"
+CONFIG_FILE="maskrcnn_r50_fpn_1x_25ep_scale.yaml"
+NPROC_PER_NODE="1"
+NNODES="2"
+USE_GPU="1"
+NCCL_IFNAME=""
+MEMORY="90g"
+USE_SUDO_DOCKER="0"
+SSH_HOST_USER=""
+DISABLE_PERIODIC_EVAL="0"
+DROP_CACHES="0"
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  run_maskrcnn_ablation.sh --role <host|worker> --master-addr <ip> --ablation-dir <path> [options]
+
+Required:
+  --role <host|worker>     DDP node role for this machine.
+  --master-addr <ip>       Master node address (same value on both nodes).
+  --ablation-dir <path>    Folder containing variant subfolders (e.g. brightness1, crop2, ...).
+
+Optional:
+  --master-port <port>     Default: 29500
+  --image <name>           Docker image. Default: maskdino-demo:latest
+  --config-file <path>     Config file inside workspace. Default: maskrcnn_r50_fpn_1x_25ep_scale.yaml
+  --nproc-per-node <n>     GPUs per node for launch_ddp.sh. Default: 1
+  --nnodes <n>             Number of nodes for launch_ddp.sh. Default: 2
+  --nccl-ifname <name>     Optional NCCL_SOCKET_IFNAME value.
+  --memory <size>          Docker memory/memory-swap. Default: 90g
+  --sudo-docker            Run docker commands via sudo.
+  --ssh-host-user <user>   SSH user for master node (worker only). Used to check
+                           if a variant is already done on the host before running.
+                           Example: --ssh-host-user spark1gm
+  --no-periodic-eval       Disable Detectron2 TEST.EVAL_PERIOD during training.
+                           Default behavior keeps periodic eval enabled.
+                           Use this flag to skip in-run eval and rely on post-run checkpoints instead.
+  --drop-caches            Drop the host kernel page/slab cache between variants
+                           (runs: sync && echo 3 > /proc/sys/vm/drop_caches via sudo -n).
+                           Strongly recommended when running many variants sequentially to
+                           prevent OOM caused by page-cache accumulation across runs.
+  --cpu-only               Disable --gpus all.
+  -h, --help               Show this help.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --role)
+      ROLE="${2:-}"
+      shift 2
+      ;;
+    --master-addr)
+      MASTER_ADDR="${2:-}"
+      shift 2
+      ;;
+    --master-port)
+      MASTER_PORT="${2:-}"
+      shift 2
+      ;;
+    --ablation-dir)
+      AB_DIR="${2:-}"
+      shift 2
+      ;;
+    --image)
+      IMAGE="${2:-}"
+      shift 2
+      ;;
+    --config-file)
+      CONFIG_FILE="${2:-}"
+      shift 2
+      ;;
+    --nproc-per-node)
+      NPROC_PER_NODE="${2:-}"
+      shift 2
+      ;;
+    --nnodes)
+      NNODES="${2:-}"
+      shift 2
+      ;;
+    --nccl-ifname)
+      NCCL_IFNAME="${2:-}"
+      shift 2
+      ;;
+    --memory)
+      MEMORY="${2:-}"
+      shift 2
+      ;;
+    --sudo-docker)
+      USE_SUDO_DOCKER="1"
+      shift
+      ;;
+    --ssh-host-user)
+      SSH_HOST_USER="${2:-}"
+      shift 2
+      ;;
+    --keep-periodic-eval|--no-periodic-eval)
+      DISABLE_PERIODIC_EVAL="1"
+      shift
+      ;;
+    --drop-caches)
+      DROP_CACHES="1"
+      shift
+      ;;
+    --cpu-only)
+      USE_GPU="0"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown arg: $1" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "$ROLE" != "host" && "$ROLE" != "worker" ]]; then
+  echo "--role must be host or worker" >&2
+  exit 1
+fi
+
+if [[ -z "$MASTER_ADDR" ]]; then
+  echo "--master-addr is required" >&2
+  exit 1
+fi
+
+if [[ -z "$AB_DIR" ]]; then
+  echo "--ablation-dir is required" >&2
+  exit 1
+fi
+
+if [[ ! -d "$AB_DIR" ]]; then
+  echo "ablation directory not found: $AB_DIR" >&2
+  exit 1
+fi
+
+AB_DIR_ABS="$(cd -- "$AB_DIR" && pwd -P)"
+REPO_ROOT_ABS="$(cd -- "$REPO_ROOT" && pwd -P)"
+
+if [[ "$AB_DIR_ABS" != "$REPO_ROOT_ABS"/* ]]; then
+  echo "ablation directory must be inside repository root." >&2
+  echo "repo root: $REPO_ROOT_ABS" >&2
+  echo "ablation:  $AB_DIR_ABS" >&2
+  exit 1
+fi
+
+REL_AB_DIR="${AB_DIR_ABS#"$REPO_ROOT_ABS"/}"
+CONTAINER_AB_DIR="/workspace/$REL_AB_DIR"
+
+NODE_RANK="0"
+if [[ "$ROLE" == "worker" ]]; then
+  NODE_RANK="1"
+fi
+
+mapfile -t variants < <(find "$AB_DIR_ABS" -mindepth 1 -maxdepth 1 -type d | sort)
+
+if [[ ${#variants[@]} -eq 0 ]]; then
+  echo "No variant directories found under: $AB_DIR" >&2
+  exit 1
+fi
+
+echo "Found ${#variants[@]} ablation variants."
+echo "Role=$ROLE node_rank=$NODE_RANK master=${MASTER_ADDR}:${MASTER_PORT}"
+
+if [[ ! -f "$REPO_ROOT/$CONFIG_FILE" ]]; then
+  echo "Config file not found at: $REPO_ROOT/$CONFIG_FILE" >&2
+  exit 1
+fi
+
+DOCKER_BIN=(docker)
+if [[ "$USE_SUDO_DOCKER" == "1" ]]; then
+  DOCKER_BIN=(sudo docker)
+fi
+
+if ! "${DOCKER_BIN[@]}" info >/dev/null 2>&1; then
+  if [[ "$USE_SUDO_DOCKER" == "0" ]] && command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+    echo "Docker requires elevated permissions. Auto-switching to sudo docker."
+    DOCKER_BIN=(sudo docker)
+  else
+    echo "Cannot access Docker daemon." >&2
+    echo "Try one of:" >&2
+    echo "  1) rerun with --sudo-docker" >&2
+    echo "  2) add your user to docker group and re-login" >&2
+    exit 1
+  fi
+fi
+
+ABORT=0
+
+SUDO_KEEPALIVE_PID=""
+
+cleanup() {
+  if [[ -n "$SUDO_KEEPALIVE_PID" ]]; then
+    kill "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true
+  fi
+}
+
+abort_handler() {
+  ABORT=1
+  echo "" >&2
+  echo "[$(date '+%F %T')] Interrupted — finishing current Docker call then exiting." >&2
+}
+
+trap cleanup EXIT
+trap abort_handler INT TERM
+
+if [[ "${DOCKER_BIN[0]}" == "sudo" ]]; then
+  echo "Authenticating sudo once for the full run..."
+  sudo -v
+
+  # Keep sudo ticket fresh so each variant run does not reprompt.
+  ( while true; do sudo -n true; sleep 50; done ) &
+  SUDO_KEEPALIVE_PID="$!"
+fi
+
+for variant_path in "${variants[@]}"; do
+  variant_name="$(basename "$variant_path")"
+
+  if [[ ! -f "$variant_path/train.json" || ! -f "$variant_path/val.json" ]]; then
+    echo "Skipping ${variant_name}: missing train.json or val.json in $variant_path" >&2
+    continue
+  fi
+
+  already_done=0
+  if [[ "$ROLE" == "worker" && -n "$SSH_HOST_USER" ]]; then
+    # Strip local $HOME prefix so the path expands correctly under the remote user's home
+    repo_rel_home="${REPO_ROOT_ABS#"${HOME}/"}"
+    remote_check="~/${repo_rel_home}/output/maskrcnn/${variant_name}/model_final.pth"
+    if ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_HOST_USER}@${MASTER_ADDR}" \
+         "test -f ${remote_check}" 2>/dev/null; then
+      already_done=1
+    fi
+  elif [[ -f "$REPO_ROOT/output/maskrcnn/${variant_name}/model_final.pth" ]]; then
+    already_done=1
+  fi
+
+  if [[ "$already_done" == "1" ]]; then
+    echo "[$(date '+%F %T')] Skipping ${variant_name}: model_final.pth already exists."
+    continue
+  fi
+
+  train_json="${CONTAINER_AB_DIR}/${variant_name}/train.json"
+  val_json="${CONTAINER_AB_DIR}/${variant_name}/val.json"
+  images_root="${CONTAINER_AB_DIR}/${variant_name}"
+  output_dir="output/maskrcnn/${variant_name}"
+  train_args=()
+  if [[ "$DISABLE_PERIODIC_EVAL" == "1" ]]; then
+    train_args+=("-s" "TEST.EVAL_PERIOD=0")
+  fi
+
+  echo "============================================================"
+  echo "[$(date '+%F %T')] Running variant: ${variant_name}"
+  echo "train_json=${train_json}"
+  echo "val_json=${val_json}"
+  echo "images_root=${images_root}"
+  echo "output=${output_dir}"
+  if [[ "$DISABLE_PERIODIC_EVAL" == "1" ]]; then
+    echo "periodic_eval=disabled"
+  else
+    echo "periodic_eval=enabled"
+  fi
+
+  extra_env=()
+  if [[ -n "$NCCL_IFNAME" ]]; then
+    extra_env+=("-e" "NCCL_SOCKET_IFNAME=${NCCL_IFNAME}")
+  fi
+
+  docker_args=(run --rm -i
+    --network=host
+    --ipc=host
+    --ulimit memlock=-1
+    --ulimit stack=67108864
+    --memory="$MEMORY"
+    --memory-swap="$MEMORY"
+    -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro
+    -v "$REPO_ROOT:/workspace" -w /workspace
+  )
+
+  if [[ "$USE_GPU" == "1" ]]; then
+    docker_args=(run --gpus all --rm -i
+      --network=host
+      --ipc=host
+      --ulimit memlock=-1
+      --ulimit stack=67108864
+      --memory="$MEMORY"
+      --memory-swap="$MEMORY"
+      -v /tmp/empty:/opt/hpcx/nccl_rdma_sharp_plugin:ro
+      -v "$REPO_ROOT:/workspace" -w /workspace
+    )
+  fi
+
+  variant_exit=0
+  "${DOCKER_BIN[@]}" "${docker_args[@]}" \
+    "${extra_env[@]}" \
+    "$IMAGE" \
+    /bin/bash -lc "
+      bash ./scripts/launch_ddp.sh ${NNODES} ${NPROC_PER_NODE} ${NODE_RANK} ${MASTER_ADDR} ${MASTER_PORT} \
+      --train-json ${train_json} \
+      --val-json ${val_json} \
+      --images-root ${images_root} \
+      --output ${output_dir} \
+      --config-file ${CONFIG_FILE} \
+      ${train_args[*]} \
+      --no-resume
+    " || variant_exit=$?
+
+  if [[ "$variant_exit" -ne 0 ]]; then
+    # Exit code 130 = SIGINT (Ctrl+C), 143 = SIGTERM — treat as intentional abort.
+    if [[ "$variant_exit" -eq 130 || "$variant_exit" -eq 143 || "$ABORT" -eq 1 ]]; then
+      echo "[$(date '+%F %T')] Aborted by user during variant ${variant_name}." >&2
+      exit 1
+    fi
+    echo "[$(date '+%F %T')] ERROR: variant ${variant_name} failed with exit code ${variant_exit}. Continuing to next variant." >&2
+  else
+    echo "[$(date '+%F %T')] Finished variant: ${variant_name}"
+  fi
+
+  if [[ "$ABORT" -eq 1 ]]; then
+    echo "[$(date '+%F %T')] Aborted by user. Stopping." >&2
+    exit 1
+  fi
+
+  # Drop the host page/slab cache to prevent OOM accumulation across variants.
+  # Each training run loads the full dataset many times; without this the kernel
+  # holds those pages resident and subsequent containers may OOM early in training.
+  if [[ "$DROP_CACHES" == "1" ]]; then
+    echo "[$(date '+%F %T')] Dropping host kernel page cache..."
+    sync
+    if echo 3 | sudo -n tee /proc/sys/vm/drop_caches > /dev/null 2>&1; then
+      echo "[$(date '+%F %T')] Page cache dropped."
+    else
+      echo "[$(date '+%F %T')] WARN: drop_caches requires passwordless sudo. Cache NOT dropped." >&2
+      echo "[$(date '+%F %T')] To fix: add 'username ALL=(ALL) NOPASSWD: /usr/bin/tee' to sudoers." >&2
+    fi
+  fi
+
+  # Give the OS time to release the rendezvous port and finish memory reclaim.
+  sleep 30
+done
+
+echo "All variants completed for role: $ROLE"

@@ -1,0 +1,63 @@
+# Detectron2 Mask R-CNN R50-FPN 1x adapted for this project.
+# Self-contained config to avoid _BASE_ path-resolution issues.
+#
+# Schedule scaling notes:
+# - 1x baseline ratios: STEPS=(60000, 80000), MAX_ITER=90000
+#   -> step ratios are 0.6667 and 0.8889 of MAX_ITER.
+# - For aug3 (~14848 images = 4x scale) with IMS_PER_BATCH=32:
+#   iters/epoch = ceil(14848/32) = 464
+#   MAX_ITER = 10 * 464 = 4640
+#   STEPS ~= (3093, 4124)
+
+VERSION: 2
+
+MODEL:
+  META_ARCHITECTURE: "GeneralizedRCNN"
+  WEIGHTS: "/workspace/output/maskrcnn/scale25/model_final.pth"
+  MASK_ON: True
+  BACKBONE:
+    NAME: "build_resnet_fpn_backbone"
+  RESNETS:
+    DEPTH: 50
+    OUT_FEATURES: ["res2", "res3", "res4", "res5"]
+  FPN:
+    IN_FEATURES: ["res2", "res3", "res4", "res5"]
+  ANCHOR_GENERATOR:
+    SIZES: [[16], [32], [64], [128], [256]]
+    ASPECT_RATIOS: [[0.5, 1.0, 2.0]]
+  RPN:
+    IN_FEATURES: ["p2", "p3", "p4", "p5", "p6"]
+    PRE_NMS_TOPK_TRAIN: 2000
+    PRE_NMS_TOPK_TEST: 1000
+    POST_NMS_TOPK_TRAIN: 1000
+    POST_NMS_TOPK_TEST: 1000
+  ROI_HEADS:
+    NAME: "StandardROIHeads"
+    IN_FEATURES: ["p2", "p3", "p4", "p5"]
+    BATCH_SIZE_PER_IMAGE: 512
+  ROI_BOX_HEAD:
+    NAME: "FastRCNNConvFCHead"
+    NUM_FC: 3
+    POOLER_RESOLUTION: 7
+  ROI_MASK_HEAD:
+    NAME: "MaskRCNNConvUpsampleHead"
+    NUM_CONV: 6
+    POOLER_RESOLUTION: 14
+
+DATALOADER:
+  NUM_WORKERS: 8
+
+SOLVER:
+  IMS_PER_BATCH: 64
+  BASE_LR: 0.02
+  MAX_ITER: 4640
+  STEPS: (3093, 4124)
+  WARMUP_ITERS: 500
+  CHECKPOINT_PERIOD: 2000
+
+TEST:
+  EVAL_PERIOD: 2000
+
+INPUT:
+  MIN_SIZE_TRAIN: (800,)
+  MAX_SIZE_TRAIN: 1333

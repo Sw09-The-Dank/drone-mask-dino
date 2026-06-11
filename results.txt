@@ -1,0 +1,223 @@
+First:
+[04/29 16:34:13 d2.evaluation.coco_evaluation]: Evaluation results for bbox: 
+|   AP   |  AP50  |  AP75  |  APs   |  APm   |  APl   |
+|:------:|:------:|:------:|:------:|:------:|:------:|
+| 23.100 | 29.924 | 27.709 | 19.730 | 43.128 | 37.367 |
+[04/29 16:34:13 d2.evaluation.coco_evaluation]: Per-category bbox AP: 
+| category            | AP     | category   | AP     | category      | AP     |
+|:--------------------|:-------|:-----------|:-------|:--------------|:-------|
+| horstab             | 7.536  | verstab    | 16.475 | boom          | 10.185 |
+| wing                | 49.875 | fuselage   | 37.744 | rotor-stump   | 0.000  |
+| camera              | 0.000  | drone-body | 4.434  | arm           | 0.231  |
+| landing gear        | 0.000  | guard      | 11.513 | DNDN-concept  | 77.815 |
+| Fixed-wing-concept  | 72.607 | Shahed     | 83.956 | DJI-Mavic-Pro | 66.535 |
+| DJI-Matrice-600-Pro | 0.000  | DJI-S900   | 0.000  | DJI-Spark     | 0.000  |
+| U842-Sport-Racing   | 0.000  |            |        |               |        |
+Loading and preparing results...
+DONE (t=0.01s)
+creating index...
+index created!
+[04/29 16:34:13 d2.evaluation.fast_eval_api]: Evaluate annotation type *segm*
+[04/29 16:34:13 d2.evaluation.fast_eval_api]: COCOeval_opt.evaluate() finished in 0.22 seconds.
+[04/29 16:34:13 d2.evaluation.fast_eval_api]: Accumulating evaluation results...
+[04/29 16:34:13 d2.evaluation.fast_eval_api]: COCOeval_opt.accumulate() finished in 0.03 seconds.
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.188
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.295
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.201
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.126
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.391
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.433
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.176
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.204
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.204
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.148
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.409
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.433
+[04/29 16:34:13 d2.evaluation.coco_evaluation]: Evaluation results for segm: 
+|   AP   |  AP50  |  AP75  |  APs   |  APm   |  APl   |
+|:------:|:------:|:------:|:------:|:------:|:------:|
+| 18.769 | 29.494 | 20.078 | 12.649 | 39.104 | 43.317 |
+[04/29 16:34:13 d2.evaluation.coco_evaluation]: Per-category segm AP: 
+| category            | AP     | category   | AP     | category      | AP     |
+|:--------------------|:-------|:-----------|:-------|:--------------|:-------|
+| horstab             | 7.126  | verstab    | 8.000  | boom          | 9.722  |
+| wing                | 50.534 | fuselage   | 30.299 | rotor-stump   | 0.000  |
+| camera              | 0.000  | drone-body | 4.114  | arm           | 0.012  |
+| landing gear        | 0.000  | guard      | 5.216  | DNDN-concept  | 72.076 |
+| Fixed-wing-concept  | 57.815 | Shahed     | 79.367 | DJI-Mavic-Pro | 32.324 |
+| DJI-Matrice-600-Pro | 0.000  | DJI-S900   | 0.000  | DJI-Spark     | 0.000  |
+| U842-Sport-Racing   | 0.000  |            |        |               |        |
+
+
+
+
+
+
+
+
+second:
+[04/29 22:50:22 d2.evaluation.coco_evaluation]: Evaluation results for bbox: 
+|   AP   |  AP50  |  AP75  |  APs   |  APm   |  APl   |
+|:------:|:------:|:------:|:------:|:------:|:------:|
+| 28.210 | 32.052 | 30.854 | 23.771 | 49.765 | 46.658 |
+[04/29 22:50:22 d2.evaluation.coco_evaluation]: Per-category bbox AP: 
+| category            | AP     | category   | AP     | category      | AP     |
+|:--------------------|:-------|:-----------|:-------|:--------------|:-------|
+| horstab             | 12.349 | verstab    | 30.376 | boom          | 21.127 |
+| wing                | 63.468 | fuselage   | 47.797 | rotor-stump   | 0.297  |
+| camera              | 0.000  | drone-body | 6.231  | arm           | 0.396  |
+| landing gear        | 0.000  | guard      | 15.732 | DNDN-concept  | 93.430 |
+| Fixed-wing-concept  | 80.833 | Shahed     | 90.214 | DJI-Mavic-Pro | 73.747 |
+| DJI-Matrice-600-Pro | 0.000  | DJI-S900   | 0.000  | DJI-Spark     | 0.000  |
+| U842-Sport-Racing   | 0.000  |            |        |               |        |
+Loading and preparing results...
+DONE (t=0.01s)
+creating index...
+index created!
+[04/29 22:50:22 d2.evaluation.fast_eval_api]: Evaluate annotation type *segm*
+[04/29 22:50:22 d2.evaluation.fast_eval_api]: COCOeval_opt.evaluate() finished in 0.22 seconds.
+[04/29 22:50:22 d2.evaluation.fast_eval_api]: Accumulating evaluation results...
+[04/29 22:50:22 d2.evaluation.fast_eval_api]: COCOeval_opt.accumulate() finished in 0.03 seconds.
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.230
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.319
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.263
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.170
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.439
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.458
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.208
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.244
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.244
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.184
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.456
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.467
+[04/29 22:50:22 d2.evaluation.coco_evaluation]: Evaluation results for segm: 
+|   AP   |  AP50  |  AP75  |  APs   |  APm   |  APl   |
+|:------:|:------:|:------:|:------:|:------:|:------:|
+| 22.953 | 31.905 | 26.281 | 16.985 | 43.941 | 45.842 |
+
+
+
+
+
+[04/30 03:37:51] d2.evaluation.coco_evaluation INFO: Evaluation results for bbox: 
+|   AP   |  AP50  |  AP75  |  APs   |  APm   |  APl   |
+|:------:|:------:|:------:|:------:|:------:|:------:|
+| 28.390 | 32.659 | 31.140 | 24.329 | 49.891 | 47.772 |
+[04/30 03:37:51] d2.evaluation.coco_evaluation INFO: Per-category bbox AP: 
+| category            | AP     | category   | AP     | category      | AP     |
+|:--------------------|:-------|:-----------|:-------|:--------------|:-------|
+| horstab             | 12.405 | verstab    | 32.171 | boom          | 22.113 |
+| wing                | 64.033 | fuselage   | 49.897 | rotor-stump   | 0.693  |
+| camera              | 0.000  | drone-body | 6.937  | arm           | 0.495  |
+| landing gear        | 0.000  | guard      | 15.926 | DNDN-concept  | 92.283 |
+| Fixed-wing-concept  | 80.826 | Shahed     | 88.150 | DJI-Mavic-Pro | 73.478 |
+| DJI-Matrice-600-Pro | 0.000  | DJI-S900   | 0.000  | DJI-Spark     | 0.000  |
+| U842-Sport-Racing   | 0.000  |            |        |               |        |
+[04/30 03:37:51] d2.evaluation.fast_eval_api INFO: Evaluate annotation type *segm*
+[04/30 03:37:51] d2.evaluation.fast_eval_api INFO: COCOeval_opt.evaluate() finished in 0.22 seconds.
+[04/30 03:37:51] d2.evaluation.fast_eval_api INFO: Accumulating evaluation results...
+[04/30 03:37:51] d2.evaluation.fast_eval_api INFO: COCOeval_opt.accumulate() finished in 0.03 seconds.
+[04/30 03:37:51] d2.evaluation.coco_evaluation INFO: Evaluation results for segm: 
+|   AP   |  AP50  |  AP75  |  APs   |  APm   |  APl   |
+|:------:|:------:|:------:|:------:|:------:|:------:|
+| 23.173 | 32.546 | 26.491 | 17.770 | 44.183 | 46.683 |
+[04/30 03:37:51] d2.evaluation.coco_evaluation INFO: Per-category segm AP: 
+| category            | AP     | category   | AP     | category      | AP     |
+|:--------------------|:-------|:-----------|:-------|:--------------|:-------|
+| horstab             | 11.439 | verstab    | 21.721 | boom          | 20.349 |
+| wing                | 61.179 | fuselage   | 40.543 | rotor-stump   | 0.594  |
+| camera              | 0.000  | drone-body | 7.077  | arm           | 0.322  |
+| landing gear        | 0.000  | guard      | 8.189  | DNDN-concept  | 80.569 |
+| Fixed-wing-concept  | 62.970 | Shahed     | 82.355 | DJI-Mavic-Pro | 42.988 |
+| DJI-Matrice-600-Pro | 0.000  | DJI-S900   | 0.000  | DJI-Spark     | 0.000  |
+| U842-Sport-Racing   | 0.000  |            |        |               |        |
+
+
+10 epoch 9:31 - 11:54 2 20
+
+|   AP   |  AP50  |  AP75  |  APs   |  APm   |  APl   |
+|:------:|:------:|:------:|:------:|:------:|:------:|
+| 35.500 | 51.016 | 42.010 | 30.530 | 67.451 | 76.521 |
+[04/30 11:54:02] d2.evaluation.coco_evaluation INFO: Per-category bbox AP: 
+| category            | AP     | category   | AP     | category      | AP     |
+|:--------------------|:-------|:-----------|:-------|:--------------|:-------|
+| horstab             | 3.048  | verstab    | 8.674  | boom          | 4.408  |
+| wing                | 43.347 | fuselage   | 30.990 | rotor-stump   | 0.000  |
+| camera              | 0.000  | drone-body | 8.394  | arm           | 0.132  |
+| landing gear        | 0.020  | guard      | 33.570 | DNDN-concept  | 79.253 |
+| Fixed-wing-concept  | 58.477 | Shahed     | 64.634 | DJI-Mavic-Pro | 69.995 |
+| DJI-Matrice-600-Pro | 71.151 | DJI-S900   | 75.411 | DJI-Spark     | 56.031 |
+| U842-Sport-Racing   | 66.960 |            |        |               |        |
+[04/30 11:54:02] d2.evaluation.fast_eval_api INFO: Evaluate annotation type *segm*
+[04/30 11:54:02] d2.evaluation.fast_eval_api INFO: COCOeval_opt.evaluate() finished in 0.25 seconds.
+[04/30 11:54:02] d2.evaluation.fast_eval_api INFO: Accumulating evaluation results...
+[04/30 11:54:02] d2.evaluation.fast_eval_api INFO: COCOeval_opt.accumulate() finished in 0.04 seconds.
+[04/30 11:54:02] d2.evaluation.coco_evaluation INFO: Evaluation results for segm: 
+|   AP   |  AP50  |  AP75  |  APs  |  APm   |  APl   |
+|:------:|:------:|:------:|:-----:|:------:|:------:|
+| 13.010 | 29.706 | 10.671 | 6.949 | 32.594 | 44.257 |
+[04/30 11:54:02] d2.evaluation.coco_evaluation INFO: Per-category segm AP: 
+| category            | AP     | category   | AP     | category      | AP     |
+|:--------------------|:-------|:-----------|:-------|:--------------|:-------|
+| horstab             | 2.190  | verstab    | 0.015  | boom          | 2.155  |
+| wing                | 31.532 | fuselage   | 0.852  | rotor-stump   | 0.000  |
+| camera              | 0.000  | drone-body | 4.688  | arm           | 0.001  |
+| landing gear        | 0.000  | guard      | 7.312  | DNDN-concept  | 59.137 |
+| Fixed-wing-concept  | 30.325 | Shahed     | 56.118 | DJI-Mavic-Pro | 9.673  |
+| DJI-Matrice-600-Pro | 0.948  | DJI-S900   | 0.394  | DJI-Spark     | 34.899 |
+| U842-Sport-Racing   | 6.956  |            |        |               |        |
+
+
+
+
+
+mask dino: 12:04 17:12
+
+[04/30 17:12:15 d2.evaluation.coco_evaluation]: Evaluation results for bbox: 
+|   AP   |  AP50  |  AP75  |  APs  |  APm  |  APl   |
+|:------:|:------:|:------:|:-----:|:-----:|:------:|
+| 32.057 | 51.368 | 34.624 | 0.011 | 9.706 | 57.859 |
+[04/30 17:12:15 d2.evaluation.coco_evaluation]: Per-category bbox AP: 
+| category            | AP     | category   | AP     | category      | AP     |
+|:--------------------|:-------|:-----------|:-------|:--------------|:-------|
+| horstab             | 7.822  | verstab    | 20.039 | boom          | 15.125 |
+| wing                | 52.283 | fuselage   | 31.735 | rotor-stump   | 2.642  |
+| camera              | 2.971  | drone-body | 14.208 | arm           | 2.688  |
+| landing gear        | 0.931  | guard      | 27.976 | DNDN-concept  | 73.117 |
+| Fixed-wing-concept  | 66.460 | Shahed     | 66.920 | DJI-Mavic-Pro | 46.372 |
+| DJI-Matrice-600-Pro | 33.873 | DJI-S900   | 46.297 | DJI-Spark     | 46.930 |
+| U842-Sport-Racing   | 50.702 |            |        |               |        |
+Loading and preparing results...
+DONE (t=0.23s)
+creating index...
+index created!
+[04/30 17:12:16 d2.evaluation.fast_eval_api]: Evaluate annotation type *segm*
+[04/30 17:12:16 d2.evaluation.fast_eval_api]: COCOeval_opt.evaluate() finished in 0.51 seconds.
+[04/30 17:12:16 d2.evaluation.fast_eval_api]: Accumulating evaluation results...
+[04/30 17:12:17 d2.evaluation.fast_eval_api]: COCOeval_opt.accumulate() finished in 0.10 seconds.
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.204
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.409
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.185
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.000
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.071
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.422
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.212
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.269
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.270
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.000
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.076
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.424
+[04/30 17:12:17 d2.evaluation.coco_evaluation]: Evaluation results for segm: 
+|   AP   |  AP50  |  AP75  |  APs  |  APm  |  APl   |
+|:------:|:------:|:------:|:-----:|:-----:|:------:|
+| 20.395 | 40.892 | 18.485 | 0.024 | 7.125 | 42.198 |
+[04/30 17:12:17 d2.evaluation.coco_evaluation]: Per-category segm AP: 
+| category            | AP     | category   | AP     | category      | AP     |
+|:--------------------|:-------|:-----------|:-------|:--------------|:-------|
+| horstab             | 8.213  | verstab    | 8.573  | boom          | 12.156 |
+| wing                | 50.283 | fuselage   | 17.568 | rotor-stump   | 2.979  |
+| camera              | 1.696  | drone-body | 14.584 | arm           | 0.850  |
+| landing gear        | 0.518  | guard      | 7.213  | DNDN-concept  | 64.766 |
+| Fixed-wing-concept  | 50.842 | Shahed     | 61.515 | DJI-Mavic-Pro | 25.884 |
+| DJI-Matrice-600-Pro | 2.268  | DJI-S900   | 3.724  | DJI-Spark     | 40.065 |
+| U842-Sport-Racing   | 13.813 |            |        |               |        |

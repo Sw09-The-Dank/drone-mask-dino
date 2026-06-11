@@ -1,0 +1,41 @@
+Host:
+bash scripts/run_maskrcnn_ablation.sh --role host --master-addr 169.254.18.231 --ablation-dir ./dataset/ablation --nccl-ifname enp1s0f1np1 --sudo-docker --drop-caches
+
+
+Worker:
+bash scripts/run_maskrcnn_ablation.sh   --role worker   --master-addr 169.254.18.231   --ablation-dir ./dataset/ablation   --nccl-ifname enp1s0f0np0   --sudo-docker   --ssh-host-user spark1gm --drop-caches
+
+
+
+
+Host:
+tmux new-session -s ablation
+bash scripts/run_maskrcnn_ablation.sh --role host --master-addr 169.254.18.231 \
+  --ablation-dir ./dataset/ablation --nccl-ifname enp1s0f1np1 \
+  --sudo-docker --drop-caches
+# Ctrl+B, D  to detach — script keeps running
+
+Worker:
+tmux new-session -s ablation
+bash scripts/run_maskrcnn_ablation.sh --role worker --master-addr 169.254.18.231 \
+  --ablation-dir ./dataset/ablation --nccl-ifname enp1s0f0np0 \
+  --sudo-docker --ssh-host-user spark1gm --drop-caches
+# Ctrl+B, D  to detach
+
+tmux attach -t ablation
+
+
+
+$remoteUser = "spark1gm"
+$remoteHost = "130.226.99.163"
+$remotePath = "~/Documents/drone-mask-dino/output/maskrcnn"
+$localPath  = ".\collected_metrics"
+
+New-Item -ItemType Directory -Force -Path $localPath | Out-Null
+
+ssh "$remoteUser@$remoteHost" "find $remotePath -type f -name metrics.json" | ForEach-Object {
+    $remoteFile = $_.Trim()
+    $parentName = Split-Path (Split-Path $remoteFile -Parent) -Leaf
+    $localFile = Join-Path $localPath "$parentName.json"
+    scp "${remoteUser}@${remoteHost}:$remoteFile" $localFile
+}
