@@ -1,4 +1,3 @@
-
 worker
 
 sudo docker run --gpus all --rm -it \
@@ -17,9 +16,15 @@ sudo docker run --gpus all --rm -it \
     --train-json /workspace/dataset/swapaug7/train.json \
     --val-json /workspace/dataset/swapaug7/val.json \
     --images-root /workspace/dataset/swapaug7 \
-    --output output/maskrcnn/swapaug7highScale \
+    --output output/maskrcnn/swapaug7size+anchorfull50 \
     --config-file maskrcnn_r50_working_augment.yaml \
-    --epochs 10 --no-resume --gaussian-blur 0.1 0.1 1.0 --motion-blur 0.1 1 10 --gaussian-noise 0.1 0.0 10
+    --epochs 25 --gaussian-blur 0.1 0.1 1.0 --motion-blur 0.1 1 10 --gaussian-noise 0.1 0.0 10 \
+    -s 'INPUT.MAX_SIZE_TRAIN=(1920)' -s 'INPUT.MIN_SIZE_TRAIN=(640, 672, 704, 736, 768, 800, 900, 1080)' \
+    -s 'MODEL.ANCHOR_GENERATOR.SIZES=[[8, 32], [16, 64], [32, 128], [64, 256], [128, 512]]' \
+    -s 'MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION=14' \
+    -s 'MODEL.ROI_MASK_HEAD.POOLER_RESOLUTION=28' \
+    -s 'MODEL.RESNETS.DEPTH=50' \
+    -s 'MODEL.WEIGHTS=detectron2://ImageNetPretrained/MSRA/R-50.pkl'
   "
 
   Host
@@ -40,9 +45,15 @@ sudo docker run --gpus all --rm -it \
     --train-json /workspace/dataset/swapaug7/train.json \
     --val-json /workspace/dataset/swapaug7/val.json \
     --images-root /workspace/dataset/swapaug7 \
-    --output output/maskrcnn/swapaug7highScale \
+    --output output/maskrcnn/swapaug7size+anchorfull50 \
     --config-file maskrcnn_r50_working_augment.yaml \
-    --epochs 10 --no-resume --gaussian-blur 0.1 0.1 1.0 --motion-blur 0.1 1 10 --gaussian-noise 0.1 0.0 10
+    --epochs 25 --gaussian-blur 0.1 0.1 1.0 --motion-blur 0.1 1 10 --gaussian-noise 0.1 0.0 10 \
+    -s 'INPUT.MAX_SIZE_TRAIN=(1920)' -s 'INPUT.MIN_SIZE_TRAIN=(640, 672, 704, 736, 768, 800, 900, 1080)' \
+    -s 'MODEL.ANCHOR_GENERATOR.SIZES=[[8, 32], [16, 64], [32, 128], [64, 256], [128, 512]]' \
+    -s 'MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION=14' \
+    -s 'MODEL.ROI_MASK_HEAD.POOLER_RESOLUTION=28' \
+    -s 'MODEL.RESNETS.DEPTH=50' \
+    -s 'MODEL.WEIGHTS=detectron2://ImageNetPretrained/MSRA/R-50.pkl'
   "
 
 --gaussian-blur 0.2 0.1 1.0 --motion-blur 0.2 1 10 --gaussian-noise 0.2 0.0 10
